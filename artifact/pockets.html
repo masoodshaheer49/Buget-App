@@ -1,19 +1,4 @@
-<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
-<title>Pockets — Budget</title>
-<meta name="description" content="Offline budgeting app: split your money into pockets for tuition, rent, bus, car and everything else.">
-<meta name="theme-color" content="#07080f">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="Pockets">
-<link rel="manifest" href="manifest.json">
-<link rel="icon" href="icons/icon-192.png">
-<link rel="apple-touch-icon" href="icons/icon-180.png">
-<!-- BUILD:ARTIFACT-START (tools/build_artifact.py copies from here down) -->
+<title>Pockets</title>
 <style>
 /* ============================================================
    Design tokens
@@ -449,8 +434,6 @@ select.input{appearance:none;background-image:linear-gradient(45deg,transparent 
   document.documentElement.setAttribute("data-resolved-theme", resolve());
 })();
 </script>
-</head>
-<body>
 
 <div id="app">
   <header id="topbar">
@@ -2253,15 +2236,6 @@ if (window.MutationObserver) {
     .observe(document.documentElement, { attributes:true, attributeFilter:["data-theme"] });
 }
 
-/* BUILD:SW-START (tools/build_artifact.py drops this block) */
-if ("serviceWorker" in navigator && location.protocol.startsWith("http") && !hostBridge) {
-  window.addEventListener("load", () => {
-    navigator.serviceWorker.register("sw.js").catch(() => {});
-  });
-}
-/* BUILD:SW-END */
 
 })();
 </script>
-</body>
-</html>

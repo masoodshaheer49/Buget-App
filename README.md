@@ -158,6 +158,7 @@ Open it, change it, refresh.
 | `artifact/pockets.html` | Generated — the Artifact copy. Don't edit it by hand |
 | `tools/make_icons.py` | Regenerates the icons — pure Python, no dependencies |
 | `tools/build_artifact.py` | Rebuilds `artifact/pockets.html` from `index.html` |
+| `tools/embed_fonts.py` | Re-embeds the typefaces; only needed if the type changes |
 
 After changing `index.html`, run `python3 tools/build_artifact.py` to bring the
 Artifact copy along. It strips the `<html>/<head>/<body>` wrapper (the Artifact
@@ -175,6 +176,21 @@ A few things worth knowing if you change the code:
   (theme, the sync switch) goes in `LOCAL_SETTINGS` so it is never pushed.
   `saveLocal()` writes without syncing — use it when applying something that
   just arrived, or it bounces straight back.
+- **Colour means something or it is not there.** The chrome is ink on paper;
+  green, red and amber mean money in, money out, and something owed. A pocket's
+  colour appears only as its 3px identifying rule and its monogram — never as a
+  gauge fill or a decorative tint. If you find yourself reaching for a colour to
+  make something look nicer, use weight or space instead.
+- **Not everything is a card.** Rows are separated by hairlines. Border, fill
+  and radius are spent on the one thing that needs lifting, not stamped on
+  every block.
+- **Figures are set in the mono face** with tabular figures so columns line up,
+  and cents sit a shade back so the euros read first. Pockets are marked by
+  two-letter monograms (`markFor`), which widen to three letters when two
+  pockets would otherwise share one — Internet and Insurance both want "IN".
+- **The typefaces are embedded, not linked.** Archivo and IBM Plex Mono ship as
+  base64 woff2 inside the file, because a `<link>` to Google Fonts does not
+  work with no signal. Regenerate with `tools/embed_fonts.py`.
 - **The theme is resolved in one place.** `resolvedTheme()` picks the app
   setting, else a host that stamps `data-theme` on `<html>` (the Artifact viewer
   does), else the OS preference, and stamps the answer as `data-resolved-theme`.

@@ -23,8 +23,8 @@ Published as a Claude Artifact, private to the owner's account:
 
 **<https://claude.ai/code/artifact/e64cb0fb-e2aa-4e2f-980a-1fbca10307e9>**
 
-Open it on your phone and add it to your home screen. Data is stored in that
-page's own browser storage on your device.
+Open it on your phone and add it to your home screen — then open the same link
+on your laptop and the two stay in step. This is the only copy with sync.
 
 ### Option B — GitHub Pages (gives you a proper offline app icon)
 
@@ -45,8 +45,8 @@ with no signal.
 Download `index.html` and open it. It works, but you don't get the home-screen
 icon or offline caching, and some browsers restrict saved data on local files.
 
-> **The three copies do not share data.** Each keeps its own budget in its own
-> browser storage. Pick one and stay with it, or move between them with the
+> **Only Option A syncs.** The GitHub Pages and local copies each keep their own
+> separate budget in their own browser storage. Move between them with the
 > backup/restore below.
 
 ---
@@ -95,14 +95,41 @@ relabelling money you already have.
 
 ---
 
+## Sync across devices
+
+Open the shared link on your phone and your laptop and both show the same
+figures. **Settings → Sync across devices** shows the status and turns it off
+for that device.
+
+- **Your budget is stored with the app's shared link, not just on the device.**
+  That is the trade for sync — the GitHub Pages and local copies still keep
+  everything on-device and have no sync at all. Access is restricted to the
+  owner's account, so even if the link were shared, nobody else can read the
+  data.
+- **Every device still keeps its own full copy**, so the app works with no
+  signal and catches up when it reconnects.
+- **Devices merge, they don't overwrite.** Add something on your phone on the
+  bus and something else on the laptop at home, and you end up with both. A
+  plain "last save wins" would have thrown one of them away.
+- **Deleting really deletes.** Removals travel as tombstones, so an entry you
+  delete on one device doesn't come back from the other.
+- **Theme and the sync switch stay per-device** — your laptop can be light while
+  your phone is dark.
+- **Erase everything erases everywhere** while sync is on. The confirmation says
+  so.
+
+The merge rules: transactions union by id minus tombstones; pockets keep the
+copy with the newer `updatedAt`; settings are whole-object newest-wins. Each
+rule gives the same answer whichever order the devices apply it in, so both
+converge on the same budget.
+
 ## Your data
 
-Everything lives in `localStorage` **in the browser on your device**. Nothing is
-uploaded, there is no server, no account, and no analytics. Not even the app's
-own service worker touches your numbers — it only caches the page itself so it
-opens offline.
+Without sync, everything lives in `localStorage` **in the browser on your
+device** — no server, no account, no analytics. The service worker caches only
+the page itself, never your numbers.
 
-The flip side: **clearing your browser data deletes your budget.** So:
+Either way: **clearing your browser data deletes that device's copy.** So:
 
 > **Settings → Back up my budget** saves everything as a JSON file.
 > **Settings → Restore from a backup** loads it back, on this phone or a new one.
@@ -143,6 +170,11 @@ A few things worth knowing if you change the code:
   pockets, and a flat list of transactions. Every balance is recomputed from
   that list on each render (`derive()`), so history and deletions always stay
   consistent — delete an old entry and everything downstream just re-adds up.
+- **Sync merges, it never replaces.** `mergeStates()` is the whole contract; if
+  you add a field to the state, decide how it merges. Anything device-local
+  (theme, the sync switch) goes in `LOCAL_SETTINGS` so it is never pushed.
+  `saveLocal()` writes without syncing — use it when applying something that
+  just arrived, or it bounces straight back.
 - **The theme is resolved in one place.** `resolvedTheme()` picks the app
   setting, else a host that stamps `data-theme` on `<html>` (the Artifact viewer
   does), else the OS preference, and stamps the answer as `data-resolved-theme`.

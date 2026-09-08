@@ -399,6 +399,12 @@ select.input{appearance:none;background-image:linear-gradient(45deg,transparent 
 }
 @keyframes toastin{from{opacity:0;transform:translate(-50%,10px)}to{opacity:1;transform:translate(-50%,0)}}
 
+/* sync status dot */
+.syncdot{width:9px;height:9px;border-radius:50%;background:var(--muted-2);flex:none}
+.syncdot.green{background:var(--green)}
+.syncdot.amber{background:var(--amber)}
+.syncdot.red{background:var(--red)}
+
 /* demo-data notice — deliberately loud, because mistaking example
    figures for your own money is the one bad outcome here */
 #demobar{
@@ -481,6 +487,8 @@ select.input{appearance:none;background-image:linear-gradient(45deg,transparent 
    ============================================================ */
 const STORAGE_KEY = "pockets.budget.v1";
 const SCHEMA = 1;
+const SYNC_DOC = "budget/state";
+const TOMBSTONE_TTL = 365 * 24 * 3600 * 1000;   // a device offline longer than this loses deletions
 
 const CURRENCIES = [
   ["EUR", "€", "Euro"], ["USD", "$", "US Dollar"], ["GBP", "£", "Pound"],
@@ -525,14 +533,37 @@ let toastTimer = null;
 function uid(){ return Date.now().toString(36) + Math.random().toString(36).slice(2, 8); }
 
 function defaultState(){
+  const now = Date.now();
   return {
     schema: SCHEMA,
-    settings: { currency:"EUR", theme:"auto", name:"", hideSetup:false, demo:false },
+    settings: { currency:"EUR", theme:"auto", name:"", hideSetup:false, demo:false,
+                sync:true, updatedAt:now },
     categories: DEFAULT_CATEGORIES.map((c, i) => ({
-      id: uid(), order: i, archived:false, goal:0, dueDay:null, ...c
+      id: uid(), order: i, archived:false, goal:0, dueDay:null, updatedAt:now, ...c
     })),
-    tx: []
+    tx: [],
+    // Deletions have to travel between devices too, or a merge on the other
+    // side would simply put the deleted entry back.
+    tombstones: {},      // txId  -> deleted-at ms
+    catTombstones: {}    // catId -> deleted-at ms
   };
+}
+
+/** A cleared budget that also tells other devices what was cleared. */
+function freshState(){
+  const now = Date.now();
+  const next = defaultState();
+  next.tombstones = Object.assign({}, state ? state.tombstones : null);
+  next.catTombstones = Object.assign({}, state ? state.catTombstones : null);
+  if (state) {
+    state.tx.forEach(t => next.tombstones[t.id] = now);
+    state.categories.forEach(c => next.catTombstones[c.id] = now);
+    next.settings.currency = state.settings.currency;
+    next.settings.theme = state.settings.theme;
+    next.settings.name = state.settings.name;
+    next.settings.sync = state.settings.sync;
+  }
+  return next;
 }
 
 /**
@@ -620,8 +651,13 @@ function migrate(data){
   };
   if (["auto","dark","light"].indexOf(s.settings.theme) < 0) s.settings.theme = "auto";
   s.settings.demo = !!s.settings.demo;
+  s.settings.sync = s.settings.sync !== false;
+  s.settings.updatedAt = num(s.settings.updatedAt);
+  s.tombstones = tsMap(data.tombstones);
+  s.catTombstones = tsMap(data.catTombstones);
   s.categories = s.categories.map((c, i) => ({
     id: c.id || uid(),
+    updatedAt: num(c.updatedAt),
     order: typeof c.order === "number" ? c.order : i,
     name: String(c.name || "Untitled"),
     icon: c.icon || "💰",
@@ -647,12 +683,33 @@ function migrate(data){
 }
 
 let saveTimer = null;
-function save(){
+/** Persist to this device only — used when applying something that just
+    arrived from another device, so it doesn't bounce straight back. */
+function saveLocal(){
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }
     catch (e) { toast("Couldn't save — storage is full or blocked"); }
   }, 60);
+}
+function save(){ saveLocal(); schedulePush(); }
+
+/** Sanitise a tombstone map to {id: timestamp}, dropping very old entries. */
+function tsMap(raw){
+  const out = {};
+  if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+    const cutoff = Date.now() - TOMBSTONE_TTL;
+    Object.keys(raw).forEach(k => {
+      const t = Number(raw[k]);
+      if (Number.isFinite(t) && t > cutoff) out[k] = t;
+    });
+  }
+  return out;
+}
+function newestTombstones(a, b){
+  const out = Object.assign({}, a);
+  Object.keys(b || {}).forEach(k => { if (!(out[k] > b[k])) out[k] = b[k]; });
+  return out;
 }
 
 /* ============================================================
@@ -837,6 +894,242 @@ function upcomingBills(cats, limit){
 }
 
 /* ============================================================
+   Sync (Artifact builds only)
+   ------------------------------------------------------------
+   The whole budget lives in one document, but devices MERGE rather
+   than overwrite. Replacing the document wholesale would mean the
+   last device to write silently erases anything the other recorded
+   while it was offline — for a budget, that is losing a rent payment.
+
+   Merging works because the three parts each have a rule that gives
+   the same answer whichever order the devices apply it in:
+     transactions  union by id, minus anything tombstoned
+     pockets       per id, the copy with the newer updatedAt
+     settings      whole-object, the copy with the newer updatedAt
+
+   `theme` is deliberately NOT synced: a phone and a laptop can
+   reasonably want different ones.
+   ============================================================ */
+const hostBridge = (window.claude && typeof window.claude.use === "function") ? window.claude : null;
+
+let syncRef = null;
+let syncUnsub = null;
+let lastPushedSig = null;
+let pushTimer = null;
+let syncRetry = 0;
+/* off | unsupported | connecting | live | saving | retrying | full | blocked */
+let syncState = hostBridge ? "connecting" : "unsupported";
+let syncedAt = 0;
+
+/** Stable serialisation: both devices must produce byte-identical text for
+    logically identical budgets, or they would push at each other forever. */
+function canon(v){
+  if (Array.isArray(v)) return "[" + v.map(canon).join(",") + "]";
+  if (v && typeof v === "object") {
+    return "{" + Object.keys(v).sort()
+      .map(k => JSON.stringify(k) + ":" + canon(v[k])).join(",") + "}";
+  }
+  return JSON.stringify(v === undefined ? null : v);
+}
+
+/* Preferences that belong to the device, not the budget: a phone and a laptop
+   can want different themes, and turning sync off here must not turn it off
+   over there. */
+const LOCAL_SETTINGS = ["theme", "sync", "demo"];
+
+function syncPayload(s){
+  const settings = {};
+  Object.keys(s.settings).forEach(k => {
+    if (LOCAL_SETTINGS.indexOf(k) < 0) settings[k] = s.settings[k];
+  });
+  const byId = (a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+  return {
+    schema: SCHEMA,
+    settings: settings,
+    categories: s.categories.slice().sort(byId),
+    tx: s.tx.slice().sort(byId),
+    tombstones: s.tombstones,
+    catTombstones: s.catTombstones
+  };
+}
+
+function mergeStates(local, remote){
+  const tombs = newestTombstones(local.tombstones, remote.tombstones);
+  const catTombs = newestTombstones(local.catTombstones, remote.catTombstones);
+
+  const txById = {};
+  local.tx.concat(remote.tx).forEach(t => { if (!tombs[t.id]) txById[t.id] = t; });
+
+  const catById = {};
+  local.categories.concat(remote.categories).forEach(c => {
+    if (catTombs[c.id]) return;
+    const prev = catById[c.id];
+    if (!prev || num(c.updatedAt) >= num(prev.updatedAt)) catById[c.id] = c;
+  });
+
+  const remoteWins = num(remote.settings.updatedAt) > num(local.settings.updatedAt);
+  const settings = Object.assign({}, remoteWins ? remote.settings : local.settings);
+  LOCAL_SETTINGS.forEach(k => settings[k] = local.settings[k]);
+
+  return {
+    schema: SCHEMA,
+    settings: settings,
+    categories: Object.keys(catById).map(k => catById[k]).sort((a, b) => a.order - b.order),
+    tx: Object.keys(txById).map(k => txById[k]),
+    tombstones: tombs,
+    catTombstones: catTombs
+  };
+}
+
+function syncEnabled(){
+  return !!syncRef && state.settings.sync !== false && !state.settings.demo;
+}
+
+function setSyncState(s){
+  if (syncState === s) return;
+  syncState = s;
+  paintSyncStatus();
+}
+
+function schedulePush(immediate){
+  if (!syncEnabled()) return;
+  clearTimeout(pushTimer);
+  pushTimer = setTimeout(pushNow, immediate ? 0 : 900);
+}
+
+function pushNow(){
+  if (!syncEnabled()) return;
+  const body = syncPayload(state);
+  const sig = canon(body);
+  if (sig === lastPushedSig) return;          // nothing new to say
+  setSyncState("saving");
+  syncRef.set(body).then(() => {
+    lastPushedSig = sig;
+    syncRetry = 0;
+    syncedAt = Date.now();
+    setSyncState("live");
+  }, err => {
+    const code = err && err.code;
+    if (code === "invalid_argument") {
+      // Almost always the 256 KiB document ceiling.
+      setSyncState("full");
+    } else if (code === "revoked" || code === "not_granted" ||
+               code === "capability_disabled" || code === "capability_removed") {
+      stopSync("blocked");
+    } else {
+      setSyncState("retrying");
+      if (syncRetry < 6) {
+        const wait = Math.min(30000, 1500 * Math.pow(2, syncRetry++)) + Math.random() * 500;
+        setTimeout(() => schedulePush(true), wait);
+      }
+    }
+  });
+}
+
+function onRemote(snap){
+  if (!state.settings.sync) return;
+
+  if (!snap.exists) {                 // first device to arrive: seed the store
+    setSyncState("live");
+    if (!state.settings.demo) schedulePush(true);
+    return;
+  }
+
+  let remote;
+  try { remote = migrate(snap.data()); }
+  catch (e) { setSyncState("live"); return; }
+  if (!Array.isArray(remote.categories) || !remote.categories.length) {
+    setSyncState("live");
+    return;
+  }
+
+  // Example data is never merged — a device still showing it adopts the
+  // real budget wholesale instead of blending fake figures into it.
+  if (state.settings.demo) {
+    const theme = state.settings.theme;
+    state = remote;
+    state.settings.theme = theme;
+    state.settings.demo = false;
+    lastPushedSig = canon(syncPayload(state));
+    saveLocal();
+    setSyncState("live");
+    syncedAt = Date.now();
+    render();
+    toast("Budget loaded from your other device");
+    return;
+  }
+
+  const before = canon(syncPayload(state));
+  const merged = mergeStates(state, remote);
+  const after = canon(syncPayload(merged));
+
+  if (after !== before) {
+    state = merged;
+    saveLocal();
+    render();
+  }
+  syncedAt = Date.now();
+  setSyncState("live");
+  // If the merge produced anything the store doesn't have yet, send it back.
+  if (after !== canon(syncPayload(remote))) schedulePush(true);
+  else lastPushedSig = after;
+}
+
+function stopSync(reason){
+  if (syncUnsub) { try { syncUnsub(); } catch (e) {} }
+  syncUnsub = null;
+  syncRef = null;
+  clearTimeout(pushTimer);
+  setSyncState(reason || "off");
+}
+
+function startSync(){
+  if (!hostBridge) { setSyncState("unsupported"); return; }
+  hostBridge.use("db").then(db => {
+    if (!db) { setSyncState("unsupported"); return; }
+    try { syncRef = db.doc(SYNC_DOC); }
+    catch (e) { setSyncState("unsupported"); return; }
+    if (state.settings.sync === false) { setSyncState("off"); return; }
+    setSyncState("connecting");
+    syncUnsub = syncRef.onSnapshot(onRemote, err => {
+      syncUnsub = null;
+      const code = err && err.code;
+      stopSync(code === "revoked" || code === "not_granted" ? "blocked" : "off");
+    });
+  }, () => setSyncState("unsupported"));
+}
+
+const SYNC_COPY = {
+  unsupported: ["Not available here", "Sync needs the shared link version of the app."],
+  off:         ["Off", "This device keeps its budget to itself."],
+  connecting:  ["Connecting…", "Looking for your other devices."],
+  live:        ["On", "Your devices stay in step automatically."],
+  saving:      ["Saving…", "Sending your latest changes."],
+  retrying:    ["Reconnecting…", "Changes are saved on this device and will go up shortly."],
+  full:        ["Too much history", "The budget is too big to sync. Back it up, then clear old months."],
+  blocked:     ["Unavailable", "This view isn't allowed to sync. Your budget is safe on this device."]
+};
+function syncBadge(){
+  if (syncState === "live" || syncState === "saving") return "green";
+  if (syncState === "retrying" || syncState === "connecting") return "amber";
+  if (syncState === "full" || syncState === "blocked") return "red";
+  return "";
+}
+function paintSyncStatus(){
+  const row = document.getElementById("sync-row");
+  if (row) {
+    row.querySelector("[data-sync-label]").textContent = SYNC_COPY[syncState][0];
+    row.querySelector("[data-sync-note]").textContent = SYNC_COPY[syncState][1];
+    row.querySelector("[data-sync-badge]").className = "syncdot " + syncBadge();
+  }
+  const sub = document.getElementById("tb-sub");
+  if (sub && sub.dataset.base) {
+    const mark = { saving:" · saving", retrying:" · offline", full:" · sync full", blocked:"" }[syncState];
+    sub.textContent = sub.dataset.base + (mark || "");
+  }
+}
+
+/* ============================================================
    Rendering
    ============================================================ */
 const view = document.getElementById("view");
@@ -876,9 +1169,10 @@ function render(){
   const sub = document.getElementById("tb-sub");
   const nm = state.settings.name ? state.settings.name : "";
   title.textContent = ui.tab === "home" ? (nm ? greeting() + ", " + nm : greeting()) : tabTitle(ui.tab);
-  sub.textContent = ui.tab === "home"
+  sub.dataset.base = ui.tab === "home"
     ? new Date().toLocaleDateString(undefined, { weekday:"long", day:"numeric", month:"long" })
     : subFor(ui.tab, d);
+  sub.textContent = sub.dataset.base;
 
   document.querySelectorAll("#tabbar [data-tab]").forEach(b => {
     b.setAttribute("aria-selected", b.dataset.tab === ui.tab ? "true" : "false");
@@ -890,6 +1184,7 @@ function render(){
   else if (ui.tab === "bills") html += viewBills(d);
   else html += viewStats(d);
   view.innerHTML = html;
+  paintSyncStatus();
 
   view.style.animation = "none"; void view.offsetHeight; view.style.animation = "";
 }
@@ -1566,6 +1861,8 @@ function unpayBill(catId, mk){
   const hits = state.tx.filter(t => t.kind === "expense" && t.catId === catId && t.billPeriod === mk);
   if (!hits.length) return;
   confirmSheet("Undo payment", "This removes " + hits.length + " recorded payment" + (hits.length === 1 ? "" : "s") + " and puts the money back.", "Remove payment", () => {
+    const now = Date.now();
+    hits.forEach(t => state.tombstones[t.id] = now);
     state.tx = state.tx.filter(t => !(t.kind === "expense" && t.catId === catId && t.billPeriod === mk));
     save(); render(); toast("Payment undone");
   });
@@ -1744,6 +2041,7 @@ function doSaveCategory(id){
 
   const patch = {
     name,
+    updatedAt: Date.now(),
     icon: draft.icon || "💰",
     color: draft.color || PALETTE[0],
     type,
@@ -1780,8 +2078,13 @@ function deleteCategory(id){
 
   confirmSheet("Delete pocket", msg, used ? "Archive pocket" : "Delete pocket", () => {
     if (Math.abs(bal) > 0.005) addTx({ kind:"allocate", amount:-bal, catId:id, note:"pocket closed" });
-    if (used) c.archived = true;
-    else state.categories = state.categories.filter(x => x.id !== id);
+    if (used) {
+      c.archived = true;
+      c.updatedAt = Date.now();
+    } else {
+      state.categories = state.categories.filter(x => x.id !== id);
+      state.catTombstones[id] = Date.now();
+    }
     save(); render(); toast(used ? "Archived" : "Deleted");
   });
 }
@@ -1845,14 +2148,21 @@ function sheetPlan(){
 }
 function doSavePlan(){
   const s = sheetEl();
+  const now = Date.now();
   s.querySelectorAll("[data-plan-id]").forEach(row => {
     const c = state.categories.find(x => x.id === row.dataset.planId);
     if (!c) return;
-    c.planned = parseAmount(row.querySelector("[data-plan-amt]").value);
+    const planned = parseAmount(row.querySelector("[data-plan-amt]").value);
     const due = row.querySelector("[data-plan-due]");
-    if (due) c.dueDay = due.value ? clamp(parseInt(due.value, 10), 1, 31) : null;
+    const dueDay = due ? (due.value ? clamp(parseInt(due.value, 10), 1, 31) : null) : c.dueDay;
+    if (planned !== c.planned || dueDay !== c.dueDay) {
+      c.planned = planned;
+      c.dueDay = dueDay;
+      c.updatedAt = now;
+    }
   });
   state.settings.hideSetup = true;
+  state.settings.updatedAt = now;
   save(); closeSheet(); render(); toast("Monthly plan saved");
 }
 function fillExamplePlan(){
@@ -1903,6 +2213,7 @@ function sheetTx(id){
 function deleteTx(id){
   confirmSheet("Delete entry", "This removes the entry and recalculates your balances.", "Delete", () => {
     state.tx = state.tx.filter(t => t.id !== id);
+    state.tombstones[id] = Date.now();
     save(); render(); toast("Entry deleted");
   });
 }
@@ -1952,7 +2263,32 @@ function sheetSettings(){
 
     <button class="btn primary" data-do="savesettings" style="margin-bottom:20px">Save settings</button>
 
-    <h2 class="sec" style="margin-top:4px">Your data</h2>
+    <h2 class="sec" style="margin-top:4px">Sync across devices</h2>
+    <div class="card" id="sync-row">
+      <div class="spread">
+        <div class="grow">
+          <div class="row" style="gap:8px">
+            <span class="syncdot ${syncBadge()}" data-sync-badge></span>
+            <b data-sync-label>${esc(SYNC_COPY[syncState][0])}</b>
+          </div>
+          <div class="tiny muted" data-sync-note style="margin-top:3px">${esc(SYNC_COPY[syncState][1])}</div>
+        </div>
+        ${syncState === "unsupported" ? "" : `
+        <button class="btn" style="width:auto;padding:10px 15px;font-size:13.5px" data-do="togglesync">
+          ${state.settings.sync === false ? "Turn on" : "Turn off"}
+        </button>`}
+      </div>
+      ${syncState === "unsupported" ? "" : `
+      <p class="tiny muted" style="margin:12px 0 0;line-height:1.55">
+        With sync on, your budget is stored with this app's shared link so your
+        phone and laptop show the same figures. Only your account can read it.
+        Each device also keeps its own copy, so the app still works with no signal
+        and catches up afterwards. Turn it off and this device goes back to
+        keeping everything to itself.
+      </p>`}
+    </div>
+
+    <h2 class="sec">Your data</h2>
     <button class="set-item" data-act="plan">
       <span class="ico" style="background:rgba(99,91,255,.2)">📋</span>
       <span class="grow"><b>Monthly plan</b><div class="tiny muted">Set what each pocket needs</div></span>${svgChevron()}
@@ -1993,14 +2329,30 @@ function sheetSettings(){
 function doSaveSettings(){
   state.settings.name = val("#f-name-set").trim();
   state.settings.currency = val("#f-currency") || "EUR";
+  state.settings.updatedAt = Date.now();
   save(); closeSheet(); render(); toast("Settings saved");
+}
+
+function doToggleSync(){
+  const turningOn = state.settings.sync === false;
+  state.settings.sync = turningOn;
+  saveLocal();                       // a per-device preference: never pushed
+  if (turningOn) {
+    lastPushedSig = null;
+    startSync();
+    toast("Sync on for this device");
+  } else {
+    stopSync("off");
+    toast("Sync off — this device keeps its budget to itself");
+  }
+  closeSheet();
+  sheetSettings();
 }
 
 /* ---- backup / restore ----
    Opened as an ordinary page, a link with `download` saves the file. Inside
    the Artifact viewer that link is inert, so ask the host to hand the file
    over instead; if neither route works, show the text to copy by hand. */
-const hostBridge = (window.claude && typeof window.claude.use === "function") ? window.claude : null;
 let downloadsPromise = null;
 function getDownloads(){
   if (!hostBridge) return Promise.resolve(null);
@@ -2078,7 +2430,24 @@ function sheetRestore(){
 function applyRestore(parsed, label){
   if (!parsed || !Array.isArray(parsed.categories)) return toast("That isn't a Pockets backup");
   confirmSheet("Restore backup", "This replaces everything currently in the app with " + label + ".", "Replace my data", () => {
-    state = migrate(parsed);
+    const incoming = migrate(parsed);
+    const now = Date.now();
+
+    // Restore means "this is the truth now". Without saying so explicitly,
+    // sync would treat everything the backup omits as news from this device
+    // and hand it straight back.
+    const keepTx = {}, keepCat = {};
+    incoming.tx.forEach(t => keepTx[t.id] = 1);
+    incoming.categories.forEach(c => keepCat[c.id] = 1);
+    state.tx.forEach(t => { if (!keepTx[t.id]) incoming.tombstones[t.id] = now; });
+    state.categories.forEach(c => { if (!keepCat[c.id]) incoming.catTombstones[c.id] = now; });
+    incoming.categories.forEach(c => c.updatedAt = now);
+    incoming.settings.updatedAt = now;
+    LOCAL_SETTINGS.forEach(k => incoming.settings[k] = state.settings[k]);
+    incoming.settings.demo = false;
+
+    state = incoming;
+    lastPushedSig = null;
     save(); render(); toast("Backup restored");
   });
 }
@@ -2109,15 +2478,20 @@ function startFresh(){
   confirmSheet("Start fresh",
     "The example figures go away and you start with an empty budget and your ten pockets, ready for your own amounts.",
     "Clear the example", () => {
-      state = defaultState();
+      state = freshState();
       save(); ui.tab = "home"; render(); toast("All yours — add your money to begin");
     });
 }
 function resetAll(){
-  confirmSheet("Erase everything", "All pockets, amounts and history will be deleted from this device. This cannot be undone.", "Erase everything", () => {
-    state = defaultState();
-    save(); ui.tab = "home"; render(); toast("Fresh start");
-  });
+  const everywhere = syncEnabled()
+    ? " Because sync is on, it is erased on your other devices too."
+    : "";
+  confirmSheet("Erase everything",
+    "All pockets, amounts and history will be deleted." + everywhere + " This cannot be undone.",
+    "Erase everything", () => {
+      state = freshState();
+      save(); ui.tab = "home"; render(); toast("Fresh start");
+    });
 }
 
 /* ============================================================
@@ -2154,7 +2528,7 @@ document.addEventListener("click", e => {
   const restore = e.target.closest("[data-restore]");
   if (restore) {
     const c = state.categories.find(x => x.id === restore.dataset.restore);
-    if (c) { c.archived = false; save(); closeSheet(); render(); toast(c.name + " restored"); }
+    if (c) { c.archived = false; c.updatedAt = Date.now(); save(); closeSheet(); render(); toast(c.name + " restored"); }
     return;
   }
 
@@ -2173,6 +2547,7 @@ document.addEventListener("click", e => {
     else if (k === "copybackup") doCopyBackup();
     else if (k === "pasterestore") doPasteRestore();
     else if (k === "pickfile") { const f = sheetEl() && sheetEl().querySelector("#f-import"); if (f) f.click(); }
+    else if (k === "togglesync") doToggleSync();
     return;
   }
 
@@ -2225,6 +2600,7 @@ window.addEventListener("storage", e => {
 state = load();
 ui.statsMonth = thisMonth();
 render();
+startSync();
 
 /* Follow the device / viewer if they change theme while the app is open. */
 if (themeQuery) {

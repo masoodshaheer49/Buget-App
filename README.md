@@ -4,7 +4,8 @@ Split your money into **pockets** — Tuition, Rent, Car payment, Bus, Groceries
 Phone, Internet, Insurance, Savings, Emergency fund — so you always know which
 euro is already spoken for.
 
-Revolut-style interface, works offline, and every number stays on your phone.
+Reads like a bank statement, works offline, and syncs between your phone and
+your laptop.
 
 <p align="center">
   <img src="icons/icon-192.png" width="96" alt="Pockets icon">
@@ -79,9 +80,9 @@ relabelling money you already have.
 
 | Kind | For | What it tracks |
 |---|---|---|
-| 🧾 **Fixed bill** | Rent, tuition, car payment, insurance | A set amount with a **due day** each month. Shows up on the Bills tab and warns you when it's overdue or the pocket is short. |
-| 🛒 **Spending** | Groceries, transport, fun | A monthly budget you draw down. Turns red when you go over. |
-| 🐷 **Savings** | Savings, emergency fund | A pot that builds up towards a **goal**, with an optional amount to put aside monthly. |
+| **Fixed bill** | Rent, tuition, car payment, insurance | A set amount with a **due day** each month. Shows up on the Bills tab and warns you when it's overdue or the pocket is short. |
+| **Spending** | Groceries, transport, fun | A monthly budget you draw down. Turns red when you go over. |
+| **Savings** | Savings, emergency fund | A pot that builds up towards a **goal**, with an optional amount to put aside monthly. |
 
 ### The tabs
 

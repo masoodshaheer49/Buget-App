@@ -609,7 +609,7 @@ function defaultState(){
                 sync:true, updatedAt:now },
     categories: DEFAULT_CATEGORIES.map((c, i) => ({
       id: uid(), order: i, archived:false, goal:0, goalDate:null, dueDay:null,
-      repeat:null, updatedAt:now, ...c
+      repeat:null, cycleDays:null, cycleStart:null, updatedAt:now, ...c
     })),
     tx: [],
     // Deletions have to travel between devices too, or a merge on the other
@@ -737,6 +737,8 @@ function migrate(data){
     goal: num(c.goal),
     goalDate: /^\d{4}-\d{2}$/.test(c.goalDate || "") ? c.goalDate : null,
     repeat: normaliseRepeat(c.repeat),
+    cycleDays: clamp(Math.round(num(c.cycleDays)), 0, 365) || null,
+    cycleStart: /^\d{4}-\d{2}-\d{2}$/.test(c.cycleStart || "") ? c.cycleStart : null,
     dueDay: c.dueDay == null ? null : clamp(Math.round(num(c.dueDay)), 1, 31),
     archived: !!c.archived
   }));
@@ -945,13 +947,53 @@ function incomeIn(mk){
   return round2(total);
 }
 
-/* ---- bills ---- */
-function dueDateFor(cat, mk){
-  if (!cat.dueDay) return null;
-  const [y, m] = mk.split("-").map(Number);
-  const day = clamp(cat.dueDay, 1, daysInMonth(y, m-1));
-  return new Date(y, m-1, day);
+/* ---- bills ----
+   Two shapes. A monthly bill falls on a day of the month and is keyed by
+   "2026-10". A cycle bill — a 28-day phone plan, say — falls every N days
+   from a known date, drifts earlier through the calendar, and can land
+   twice in one month, so each occurrence is keyed by its own date. Both
+   keys go in the same `billPeriod` field, which is what keeps every
+   existing record valid. */
+function isCycle(cat){ return num(cat.cycleDays) > 0 && !!cat.cycleStart; }
+
+/** Every occurrence of this bill that falls inside month `mk`. */
+function billOccurrences(cat, mk){
+  const parts = mk.split("-").map(Number);
+  const first = new Date(parts[0], parts[1] - 1, 1);
+  const last = new Date(parts[0], parts[1], 0);
+
+  if (isCycle(cat)) {
+    const step = clamp(Math.round(num(cat.cycleDays)), 1, 365);
+    const start = parseISO(cat.cycleStart);
+    // Walk in whole days so daylight saving cannot shift an occurrence.
+    let i = Math.floor((first - start) / (step * 86400000)) - 1;
+    const out = [];
+    for (let guard = 0; guard < 80; guard++, i++) {
+      const d = new Date(start);
+      d.setDate(d.getDate() + i * step);
+      d.setHours(0, 0, 0, 0);
+      if (d > last) break;
+      // A cycle has a beginning: never invent occurrences before its start.
+      if (d >= first && d >= start) out.push({ due: d, key: isoOf(d) });
+    }
+    return out;
+  }
+
+  if (!cat.dueDay) return [];
+  const day = clamp(cat.dueDay, 1, daysInMonth(parts[0], parts[1] - 1));
+  return [{ due: new Date(parts[0], parts[1] - 1, day), key: mk }];
 }
+
+/** The soonest occurrence still unpaid, looked for a few months ahead. */
+function nextOccurrence(cat){
+  const mk = thisMonth();
+  for (let i = 0; i < 4; i++) {
+    const list = billOccurrences(cat, shiftMonth(mk, i));
+    for (const o of list) if (!isPaid(cat, o.key)) return o;
+  }
+  return null;
+}
+
 function isPaid(cat, mk){
   return state.tx.some(t => t.kind === "expense" && t.catId === cat.id && t.billPeriod === mk);
 }
@@ -962,16 +1004,17 @@ function paidAmount(cat, mk){
 }
 /** All bill occurrences for a month, sorted by due date. */
 function billsFor(mk, cats){
-  return cats
-    .filter(c => c.dueDay && c.type !== "save")
-    .map(c => {
-      const due = dueDateFor(c, mk);
-      const paid = isPaid(c, mk);
-      const today = new Date(); today.setHours(0,0,0,0);
-      const days = Math.round((due - today) / 86400000);
-      return { cat:c, due, mk, paid, days, overdue: !paid && days < 0 };
-    })
-    .sort((a,b) => a.due - b.due);
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const rows = [];
+  cats.forEach(c => {
+    if (c.type === "save") return;
+    billOccurrences(c, mk).forEach(o => {
+      const paid = isPaid(c, o.key);
+      const days = Math.round((o.due - today) / 86400000);
+      rows.push({ cat:c, due:o.due, mk:o.key, paid:paid, days:days, overdue: !paid && days < 0 });
+    });
+  });
+  return rows.sort((a, b) => a.due - b.due);
 }
 /** Upcoming bills across this month and the next, unpaid only. */
 function upcomingBills(cats, limit){
@@ -1500,13 +1543,21 @@ function pocketCard(c, d){
     else if (num(c.planned) > 0) sub = `${fmt(c.planned,{compact:true})}/mo aside · no goal yet`;
     else sub = "No goal set";
   }
-  else if (c.type === "bill") sub = c.dueDay ? `Due the ${ordinal(c.dueDay)} · ${fmt(c.planned,{compact:true})}/mo` : `${fmt(c.planned,{compact:true})}/mo`;
+  else if (c.type === "bill") {
+    if (isCycle(c)) {
+      const nxt = nextOccurrence(c);
+      sub = `${fmt(c.planned,{compact:true})} every ${c.cycleDays} days`
+          + (nxt ? ` · next ${nxt.due.toLocaleDateString(undefined,{day:"numeric",month:"short"})}` : "");
+    } else sub = c.dueDay ? `Due the ${ordinal(c.dueDay)} · ${fmt(c.planned,{compact:true})}/mo`
+                          : `${fmt(c.planned,{compact:true})}/mo`;
+  }
   else sub = `${fmt(spent,{compact:true})} spent of ${fmt(c.planned,{compact:true})} this month`
            + (c.repeat ? ` · ${repeatSummary(c.repeat)}` : "");
 
   let badge = "";
-  if (c.type === "bill" && c.dueDay) {
-    badge = isPaid(c, mk) ? `<span class="badge green">Paid</span>` :
+  if (c.type === "bill" && (c.dueDay || isCycle(c))) {
+    const nxt = nextOccurrence(c);
+    badge = !nxt ? `<span class="badge green">Paid</span>` :
       (bal >= c.planned - 0.005 && c.planned > 0 ? `<span class="badge accent">Ready</span>` : `<span class="badge amber">Short ${fmt(Math.max(0, c.planned - bal), {compact:true})}</span>`);
   } else if (overspent) {
     badge = `<span class="badge red">Over</span>`;
@@ -2036,7 +2087,9 @@ function sheetCategory(id){
       <div class="row" style="align-items:flex-start">
         ${catMark(c, ";width:44px;height:44px;font-size:14px")}
         <span class="grow">
-          <div class="item-sub" style="margin:0">${esc(TYPE_LABEL[c.type])}${c.dueDay ? " · due the " + esc(ordinal(c.dueDay)) : ""}</div>
+          <div class="item-sub" style="margin:0">${esc(TYPE_LABEL[c.type])}${
+            isCycle(c) ? " · every " + esc(c.cycleDays) + " days"
+            : c.dueDay ? " · due the " + esc(ordinal(c.dueDay)) : ""}</div>
           <div style="font-size:30px;font-weight:700;letter-spacing:-.035em;margin-top:4px;font-variant-numeric:tabular-nums">${fmtRich(bal)}</div>
         </span>
       </div>
@@ -2065,7 +2118,7 @@ function sheetCategory(id){
     <div class="tiles" style="margin-top:10px">
       <div class="tile"><div class="t-lab">Spent ${esc(monthLabel(mk).split(" ")[0])}</div><div class="t-val num">${esc(fmt(spent, {compact:true}))}</div></div>
       <div class="tile"><div class="t-lab">Planned</div><div class="t-val num">${esc(fmt(num(c.planned), {compact:true}))}</div></div>
-      <div class="tile"><div class="t-lab">${c.type === "bill" ? "Status" : "In pocket"}</div><div class="t-val" style="font-size:13px">${c.type === "bill" ? (isPaid(c, mk) ? "Paid" : "Unpaid") : esc(fmt(bal, {compact:true}))}</div></div>
+      <div class="tile"><div class="t-lab">${c.type === "bill" ? "Status" : "In pocket"}</div><div class="t-val" style="font-size:13px">${c.type === "bill" ? (nextOccurrence(c) ? "Unpaid" : "Paid") : esc(fmt(bal, {compact:true}))}</div></div>
     </div>
 
     <div class="btn-row" style="margin-top:14px">
@@ -2089,7 +2142,8 @@ function sheetEditCategory(id){
   const c = id
     ? state.categories.find(x => x.id === id)
     : { id:null, name:"", icon:"", color:PALETTE[state.categories.length % PALETTE.length],
-        type:"spend", planned:0, goal:0, goalDate:null, dueDay:null, repeat:null };
+        type:"spend", planned:0, goal:0, goalDate:null, dueDay:null, repeat:null,
+        cycleDays:null, cycleStart:null };
   if (!c) return;
 
   openSheet(id ? "Edit pocket" : "New pocket", `
@@ -2162,6 +2216,18 @@ function sheetEditCategory(id){
         ${Array.from({length:31}, (_, i) => i + 1).map(n =>
           `<option value="${n}" ${c.dueDay === n ? "selected" : ""}>${ordinal(n)}</option>`).join("")}
       </select>
+
+      <label style="margin-top:16px">Or on a cycle — a 28-day phone plan, say</label>
+      <div class="row" style="gap:10px;align-items:center">
+        <span class="item-sub" style="margin:0">Every</span>
+        <input id="f-cycle-days" class="input" type="text" inputmode="numeric"
+               placeholder="0" style="width:72px;padding:10px 11px;text-align:center"
+               value="${num(c.cycleDays) || ""}">
+        <span class="item-sub grow" style="margin:0">days, starting</span>
+      </div>
+      <input id="f-cycle-start" class="input" type="date" style="margin-top:9px"
+             value="${esc(c.cycleStart || "")}">
+      <div class="tiny muted" style="margin-top:7px" id="f-cycle-hint"></div>
     </div>
 
     <div class="field">
@@ -2230,6 +2296,31 @@ function sheetEditCategory(id){
       " a month. Entries are filled in from " + parseISO(r.start).toLocaleDateString(undefined,
         { day:"numeric", month:"long" }) + " onwards.";
   }
+  function cyclePreview(){
+    const hint = s.querySelector("#f-cycle-hint");
+    if (!hint) return;
+    const days = clamp(Math.round(num(parseAmount(s.querySelector("#f-cycle-days").value))), 0, 365);
+    const start = s.querySelector("#f-cycle-start").value;
+    const amount = parseAmount(s.querySelector("#f-planned").value);
+    if (!days || !/^\d{4}-\d{2}-\d{2}$/.test(start)) {
+      hint.textContent = "Leave this at 0 to use the day of the month above.";
+      return;
+    }
+    const perYear = round2(amount * 365 / days);
+    const next = [];
+    for (let i = 0; i < 3; i++) {
+      const d = parseISO(start);
+      d.setDate(d.getDate() + i * days);
+      next.push(d.toLocaleDateString(undefined, { day:"numeric", month:"short" }));
+    }
+    hint.textContent = "Next: " + next.join(", ") + "…" +
+      (amount > 0 ? "  ·  " + Math.round(365 / days) + " times a year, " + fmt(perYear) : "") +
+      "  ·  This replaces the day of the month.";
+  }
+  s.querySelector("#f-cycle-start").addEventListener("change", cyclePreview);
+  s.addEventListener("input", cyclePreview);
+  cyclePreview();
+
   s.querySelector("#f-rep-days").addEventListener("click", e => {
     const b = e.target.closest("[data-day]"); if (!b) return;
     b.setAttribute("aria-pressed", b.getAttribute("aria-pressed") === "true" ? "false" : "true");
@@ -2284,6 +2375,9 @@ function doSaveCategory(id){
   const dueRaw = val("#f-due");
   const goalDateRaw = val("#f-goaldate");
   const type = draft.type || "spend";
+  const cycleDays = type === "save" ? 0
+    : clamp(Math.round(num(parseAmount(val("#f-cycle-days")))), 0, 365);
+  const cycleStartRaw = val("#f-cycle-start");
   const repeat = type !== "spend" ? null : normaliseRepeat({
     amount: parseAmount(val("#f-rep-amount")),
     days: [...sheetEl().querySelectorAll('#f-rep-days [aria-pressed="true"]')].map(b => Number(b.dataset.day)),
@@ -2300,6 +2394,8 @@ function doSaveCategory(id){
     goal: type === "save" ? primary : 0,
     goalDate: type === "save" && /^\d{4}-\d{2}$/.test(goalDateRaw) ? goalDateRaw : null,
     repeat: repeat,
+    cycleDays: cycleDays && /^\d{4}-\d{2}-\d{2}$/.test(cycleStartRaw) ? cycleDays : null,
+    cycleStart: cycleDays && /^\d{4}-\d{2}-\d{2}$/.test(cycleStartRaw) ? cycleStartRaw : null,
     dueDay: type === "save" || !dueRaw ? null : clamp(parseInt(dueRaw, 10), 1, 31)
   };
 

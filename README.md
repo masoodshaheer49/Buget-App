@@ -4,8 +4,7 @@ Split your money into **pockets** — Tuition, Rent, Car payment, Bus, Groceries
 Phone, Internet, Insurance, Savings, Emergency fund — so you always know which
 euro is already spoken for.
 
-Reads like a bank statement, works offline, and syncs between your phone and
-your laptop.
+Reads like a bank statement and works offline.
 
 <p align="center">
   <img src="icons/icon-192.png" width="96" alt="Pockets icon">
@@ -16,18 +15,8 @@ your laptop.
 ## Getting it onto your phone
 
 The app is one HTML file, so there is nothing to install and no account to make.
-Three ways to run it:
 
-### Option A — the instant link (nothing to set up)
-
-Published as a Claude Artifact, private to the owner's account:
-
-**<https://claude.ai/code/artifact/e64cb0fb-e2aa-4e2f-980a-1fbca10307e9>**
-
-Open it on your phone and add it to your home screen — then open the same link
-on your laptop and the two stay in step. This is the only copy with sync.
-
-### Option B — GitHub Pages (gives you a proper offline app icon)
+### Option A — GitHub Pages (a real home-screen app)
 
 1. In this repository go to **Settings → Pages**.
 2. Under *Source* pick **Deploy from a branch**, choose the branch holding this
@@ -41,14 +30,15 @@ on your laptop and the two stay in step. This is the only copy with sync.
 It now opens full-screen with its own icon, like a normal app, and keeps working
 with no signal.
 
-### Option C — just open the file
+### Option B — just open the file
 
 Download `index.html` and open it. It works, but you don't get the home-screen
 icon or offline caching, and some browsers restrict saved data on local files.
 
-> **Only Option A syncs.** The GitHub Pages and local copies each keep their own
-> separate budget in their own browser storage. Move between them with the
-> backup/restore below.
+> **Neither of these syncs.** Each keeps its own budget in its own browser
+> storage; move a budget between them with the backup/restore below. Sync exists
+> only in the Claude Artifact build, whose runtime provides the shared store —
+> see [Sync across devices](#sync-across-devices).
 
 ---
 
@@ -98,15 +88,15 @@ relabelling money you already have.
 
 ## Sync across devices
 
-Open the shared link on your phone and your laptop and both show the same
-figures. **Settings → Sync across devices** shows the status and turns it off
-for that device.
+*This applies to the Claude Artifact build only.* Its runtime provides the
+shared store; on GitHub Pages or a local file the app reports sync as
+unavailable and keeps everything on the device. Where it is available, opening
+the app on your phone and your laptop shows the same figures, and
+**Settings → Sync across devices** gives the status and a per-device off switch.
 
-- **Your budget is stored with the app's shared link, not just on the device.**
-  That is the trade for sync — the GitHub Pages and local copies still keep
-  everything on-device and have no sync at all. Access is restricted to the
-  owner's account, so even if the link were shared, nobody else can read the
-  data.
+- **Your budget is stored server-side, not just on the device.** That is the
+  trade for sync. Access is restricted to the owner's account, so even if the
+  link were shared, nobody else can read the data.
 - **Every device still keeps its own full copy**, so the app works with no
   signal and catches up when it reconnects.
 - **Devices merge, they don't overwrite.** Add something on your phone on the
@@ -138,7 +128,7 @@ Either way: **clearing your browser data deletes that device's copy.** So:
 Worth doing every so often, and before you switch phones.
 
 Restore takes either a file or pasted text, so a backup also moves your budget
-between the three copies above. In the Artifact version the page can't hand you
+between copies of the app. In the Artifact version the page can't hand you
 a file directly unless the viewer allows it, so backup falls back to showing the
 text with a **Copy to clipboard** button — paste that into a note and it
 restores exactly the same.

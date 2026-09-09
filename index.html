@@ -1958,6 +1958,8 @@ function sheetAllocate(catId){
     </div>
     ${catSelect("f-cat", catId || (d.cats[0] && d.cats[0].id))}
     ${amountField("", "Amount to move in")}
+    ${noteField("", "e.g. Leap card top-up")}
+    ${dateField()}
     <button class="btn primary" data-do="allocate">Assign to pocket</button>
     <button class="btn" style="margin-top:8px" data-do="unallocate">Take back out of pocket</button>
     <button class="btn" style="margin-top:8px" data-act="autofill">Auto-assign everything</button>
@@ -1969,7 +1971,11 @@ function doAllocate(sign){
   if (amt <= 0) return toast("Enter an amount above zero");
   if (!catId) return toast("Pick a pocket");
   const cat = state.categories.find(c => c.id === catId);
-  addTx({ kind:"allocate", amount: sign * amt, catId, note: sign > 0 ? "" : "returned" });
+  addTx({
+    kind: "allocate", amount: sign * amt, catId,
+    note: val("#f-note").trim() || (sign > 0 ? "" : "returned"),
+    date: val("#f-date") || todayISO()
+  });
   closeSheet(); render();
   toast(sign > 0 ? fmt(amt) + " → " + cat.name : fmt(amt) + " back to unassigned");
 }
@@ -2036,6 +2042,8 @@ function sheetMove(fromId){
     ${catSelect("f-from", fromId || d.cats[0].id, { label:"From" })}
     ${catSelect("f-to", d.cats.find(c => c.id !== (fromId || d.cats[0].id)).id, { label:"To" })}
     ${amountField("", "Amount")}
+    ${noteField("", "e.g. covering groceries")}
+    ${dateField()}
     <button class="btn primary" data-do="move">Move money</button>
   `);
 }
@@ -2044,7 +2052,11 @@ function doMove(){
   const fromId = val("#f-from"), toId = val("#f-to");
   if (amt <= 0) return toast("Enter an amount above zero");
   if (!fromId || !toId || fromId === toId) return toast("Pick two different pockets");
-  addTx({ kind:"move", amount:amt, fromId, toId });
+  addTx({
+    kind: "move", amount: amt, fromId, toId,
+    note: val("#f-note").trim(),
+    date: val("#f-date") || todayISO()
+  });
   closeSheet(); render();
   const a = state.categories.find(c => c.id === fromId), b = state.categories.find(c => c.id === toId);
   toast(fmt(amt) + ": " + a.name + " → " + b.name);

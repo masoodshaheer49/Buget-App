@@ -72,7 +72,7 @@ relabelling money you already have.
 |---|---|---|
 | **Fixed bill** | Rent, tuition, car payment, insurance | A set amount with a **due day** each month. Shows up on the Bills tab and warns you when it's overdue or the pocket is short. |
 | **Spending** | Groceries, transport, fun | A monthly budget you draw down. Turns red when you go over. |
-| **Savings** | Savings, emergency fund | A pot that builds up towards a **goal**, with an optional amount to put aside monthly. |
+| **Savings** | Tuition, trips, emergency fund | A pot that builds towards a **goal**, optionally by a **target month**. Give it €4,600 by next September and it works out the monthly figure, offers to set it, and tells you whether you are keeping up. |
 
 ### The tabs
 
@@ -85,6 +85,27 @@ relabelling money you already have.
   pocket. Scroll back through past months with the arrows.
 
 ---
+
+## Quick capture from the home screen
+
+iOS will not give a web app a real home-screen widget — that needs a native
+WidgetKit app. What it does allow is a **Shortcut** that opens a URL, and a
+Shortcut can live on the home screen, in the widget area, or on Back Tap. So
+the app takes its actions from the URL hash:
+
+```
+#spend=Takeaways&amount=12.50&go    record it, show a receipt
+#spend=Groceries                    open the sheet with the pocket chosen
+#add&amount=1000                    money in, ready to confirm
+#assign=Rent                        open the assign sheet on that pocket
+```
+
+Pockets match on id or name (case-insensitive, prefix is enough). The hash is
+consumed on arrival, so a refresh cannot record the same thing twice, and
+anything with `&go` lands you on Home so the new balance backs up the receipt.
+
+**Settings → Quick-add links** lists a ready-made link per pocket with a copy
+button, and the four steps to wire one into Shortcuts.
 
 ## Sync across devices
 

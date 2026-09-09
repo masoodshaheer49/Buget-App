@@ -608,7 +608,7 @@ function defaultState(){
     settings: { currency:"EUR", theme:"auto", name:"", hideSetup:false, demo:false,
                 sync:true, updatedAt:now },
     categories: DEFAULT_CATEGORIES.map((c, i) => ({
-      id: uid(), order: i, archived:false, goal:0, dueDay:null, updatedAt:now, ...c
+      id: uid(), order: i, archived:false, goal:0, goalDate:null, dueDay:null, updatedAt:now, ...c
     })),
     tx: [],
     // Deletions have to travel between devices too, or a merge on the other
@@ -734,6 +734,7 @@ function migrate(data){
     type: ["bill","spend","save"].includes(c.type) ? c.type : "spend",
     planned: num(c.planned),
     goal: num(c.goal),
+    goalDate: /^\d{4}-\d{2}$/.test(c.goalDate || "") ? c.goalDate : null,
     dueDay: c.dueDay == null ? null : clamp(Math.round(num(c.dueDay)), 1, 31),
     archived: !!c.archived
   }));
@@ -1469,8 +1470,12 @@ function pocketCard(c, d){
   const overspent = c.type !== "save" && c.planned > 0 && spent > c.planned;
 
   let sub;
+  const pace = goalPace(c, bal);
   if (c.type === "save") {
-    if (target > 0) sub = `${fmt(bal,{compact:true})} of ${fmt(target,{compact:true})} goal`;
+    if (pace) sub = pace.done ? `${fmt(target,{compact:true})} reached`
+      : pace.overdue ? `${fmt(pace.remaining,{compact:true})} short · ${pace.label} has passed`
+      : `${fmt(pace.perMonth,{compact:true})}/mo to reach ${fmt(target,{compact:true})} by ${pace.label}`;
+    else if (target > 0) sub = `${fmt(bal,{compact:true})} of ${fmt(target,{compact:true})} goal`;
     else if (num(c.planned) > 0) sub = `${fmt(c.planned,{compact:true})}/mo aside · no goal yet`;
     else sub = "No goal set";
   }
@@ -1483,8 +1488,12 @@ function pocketCard(c, d){
       (bal >= c.planned - 0.005 && c.planned > 0 ? `<span class="badge accent">Ready</span>` : `<span class="badge amber">Short ${fmt(Math.max(0, c.planned - bal), {compact:true})}</span>`);
   } else if (overspent) {
     badge = `<span class="badge red">Over</span>`;
-  } else if (c.type === "save" && target > 0 && bal >= target) {
-    badge = `<span class="badge green">Goal met</span>`;
+  } else if (c.type === "save") {
+    if (target > 0 && bal >= target) badge = `<span class="badge green">Goal met</span>`;
+    else if (pace && pace.overdue) badge = `<span class="badge red">Past date</span>`;
+    else if (pace && num(c.planned) > 0) badge = pace.onTrack
+      ? `<span class="badge green">On track</span>`
+      : `<span class="badge amber">Behind</span>`;
   }
 
   return `
@@ -1502,6 +1511,30 @@ function pocketCard(c, d){
     </span>
     ${target > 0 ? `<span class="bar"><i style="width:${pct}%;background:${overspent ? "var(--neg)" : "var(--ink)"}"></i></span>` : ""}
   </button>`;
+}
+
+/**
+ * What a dated savings goal asks of you: months left, the amount per month
+ * that reaches it, and whether the pocket's monthly figure keeps up. A goal
+ * with a date means nothing as "€4,600 by September" — it means something as
+ * "€383 a month, and you are €50 short".
+ */
+function goalPace(c, bal){
+  if (c.type !== "save" || !c.goalDate || num(c.goal) <= 0) return null;
+  const parts = c.goalDate.split("-").map(Number);
+  const now = new Date();
+  const monthsLeft = (parts[0] - now.getFullYear()) * 12 + (parts[1] - 1 - now.getMonth());
+  const remaining = round2(Math.max(0, num(c.goal) - bal));
+  const perMonth = monthsLeft > 0 ? round2(remaining / monthsLeft) : remaining;
+  return {
+    monthsLeft: monthsLeft,
+    remaining: remaining,
+    perMonth: perMonth,
+    done: remaining <= 0.005,
+    overdue: monthsLeft <= 0 && remaining > 0.005,
+    onTrack: num(c.planned) >= perMonth - 0.005,
+    label: monthLabel(c.goalDate, true)
+  };
 }
 
 /** Two-letter mark from the pocket name — the convention a bank uses when
@@ -1971,6 +2004,7 @@ function sheetCategory(id){
   const spent = spentIn(mk, id);
   const target = c.type === "save" ? num(c.goal) : num(c.planned);
   const pct = target > 0 ? clamp(bal / target * 100, 0, 100) : 0;
+  const pace = goalPace(c, bal);
   const history = state.tx
     .filter(t => t.catId === id || t.fromId === id || t.toId === id)
     .sort(byDateDesc).slice(0, 12);
@@ -1989,7 +2023,21 @@ function sheetCategory(id){
         <div class="spread tiny muted" style="margin-top:8px">
           <span>${c.type === "save" ? "Goal" : "Monthly need"} ${esc(fmt(target, {compact:true}))}</span>
           <span>${bal >= target ? "Fully covered" : esc(fmt(round2(target - bal), {compact:true})) + " short"}</span>
-        </div>` : `<div class="item-sub" style="margin-top:10px">No ${c.type === "save" ? "goal" : "monthly amount"} set yet — tap Edit.</div>`}
+        </div>
+        ${pace && !pace.done ? `
+        <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--rule)">
+          <div class="item-sub" style="margin:0">${pace.overdue
+            ? "Target date " + esc(pace.label) + " has passed"
+            : pace.monthsLeft + " month" + (pace.monthsLeft === 1 ? "" : "s") + " to " + esc(pace.label)}</div>
+          <div style="font-size:18px;font-weight:600;margin-top:5px;letter-spacing:-.02em">
+            ${esc(fmt(pace.perMonth))}<span class="item-sub" style="display:inline;margin-left:6px">a month from here</span>
+          </div>
+          ${num(c.planned) > 0 ? `<div class="tiny ${pace.onTrack ? "pos" : "warn"}" style="margin-top:6px">
+            ${pace.onTrack
+              ? "Your " + esc(fmt(c.planned, {compact:true})) + "/month keeps up"
+              : "Putting aside " + esc(fmt(c.planned, {compact:true})) + "/month — short by " + esc(fmt(round2(pace.perMonth - num(c.planned)), {compact:true})) + "/month"}
+          </div>` : `<div class="tiny muted" style="margin-top:6px">Set a monthly amount in Edit to track whether you keep up.</div>`}
+        </div>` : ""}` : `<div class="item-sub" style="margin-top:10px">No ${c.type === "save" ? "goal" : "monthly amount"} set yet — tap Edit.</div>`}
     </div>
 
     <div class="tiles" style="margin-top:10px">
@@ -2018,7 +2066,7 @@ function sheetCategory(id){
 function sheetEditCategory(id){
   const c = id
     ? state.categories.find(x => x.id === id)
-    : { id:null, name:"", icon:"", color:PALETTE[state.categories.length % PALETTE.length], type:"spend", planned:0, goal:0, dueDay:null };
+    : { id:null, name:"", icon:"", color:PALETTE[state.categories.length % PALETTE.length], type:"spend", planned:0, goal:0, goalDate:null, dueDay:null };
   if (!c) return;
 
   openSheet(id ? "Edit pocket" : "New pocket", `
@@ -2043,6 +2091,16 @@ function sheetEditCategory(id){
       <div class="amount-input">
         <span>${esc(currencyMeta()[1])}</span>
         <input id="f-planned" type="text" inputmode="decimal" placeholder="0.00" value="${c.type === "save" ? (num(c.goal) || "") : (num(c.planned) || "")}" autocomplete="off">
+      </div>
+    </div>
+
+    <div class="field" id="f-goaldate-wrap" ${c.type === "save" ? "" : "hidden"}>
+      <label>Reach it by (optional)</label>
+      <input id="f-goaldate" class="input" type="month" value="${esc(c.goalDate || "")}">
+      <div class="row" style="margin-top:7px;gap:8px">
+        <span class="tiny muted grow" id="f-pace-hint"></span>
+        <button type="button" class="btn" id="f-pace-use" hidden
+                style="width:auto;padding:7px 11px;font-size:10px">Use it</button>
       </div>
     </div>
 
@@ -2088,6 +2146,7 @@ function sheetEditCategory(id){
     s.querySelectorAll("#f-type [data-type]").forEach(b => b.setAttribute("aria-pressed", b.dataset.type === type));
     s.querySelector("#f-amount-label").textContent = type === "save" ? "Savings goal" : "Monthly amount";
     s.querySelector("#f-monthly-save").hidden = type !== "save";
+    s.querySelector("#f-goaldate-wrap").hidden = type !== "save";
     s.querySelector("#f-due-wrap").hidden = type === "save";
     s.querySelector("#f-type-hint").textContent =
       type === "bill" ? "A fixed payment that repeats — rent, tuition, car, insurance." :
@@ -2095,6 +2154,32 @@ function sheetEditCategory(id){
       "A pot you build up towards a goal — savings, emergency fund.";
   }
   syncType();
+
+  function pacePreview(){
+    const hint = s.querySelector("#f-pace-hint");
+    if (!hint) return;
+    const goal = parseAmount(s.querySelector("#f-planned").value);
+    const when = s.querySelector("#f-goaldate").value;
+    if (type !== "save" || !goal || !/^\d{4}-\d{2}$/.test(when)) { hint.textContent = ""; return; }
+    const held = id ? round2(derive().balance[id] || 0) : 0;
+    const p = goalPace({ type:"save", goal:goal, goalDate:when, planned:0 }, held);
+    const use = s.querySelector("#f-pace-use");
+    hint.textContent = p.done ? "Already reached."
+      : p.overdue ? "That month has already passed."
+      : "That is " + fmt(p.perMonth) + " a month for " + p.monthsLeft +
+        " month" + (p.monthsLeft === 1 ? "" : "s") + ".";
+    const offer = !p.done && !p.overdue && p.perMonth > 0;
+    use.hidden = !offer;
+    if (offer) use.dataset.amount = String(p.perMonth);
+  }
+  const useBtn = s.querySelector("#f-pace-use");
+  if (useBtn) useBtn.addEventListener("click", () => {
+    s.querySelector("#f-monthly").value = useBtn.dataset.amount || "";
+    toast("Monthly amount set to " + fmt(parseAmount(useBtn.dataset.amount)));
+  });
+  s.addEventListener("input", pacePreview);
+  s.querySelector("#f-goaldate").addEventListener("change", pacePreview);
+  pacePreview();
 
   s.querySelector("#f-type").addEventListener("click", e => {
     const b = e.target.closest("[data-type]"); if (!b) return;
@@ -2105,7 +2190,7 @@ function sheetEditCategory(id){
     const first = s.querySelector("#f-planned"), monthly = s.querySelector("#f-monthly");
     if (next === "save" && type !== "save") { monthly.value = first.value; first.value = ""; }
     else if (next !== "save" && type === "save") { first.value = monthly.value; }
-    type = next; syncType();
+    type = next; syncType(); pacePreview();
   });
   s.querySelector("#f-icon").addEventListener("click", e => {
     const b = e.target.closest("[data-emoji]"); if (!b) return;
@@ -2130,6 +2215,7 @@ function doSaveCategory(id){
   const primary = parseAmount(val("#f-planned"));
   const monthlySave = parseAmount(val("#f-monthly"));
   const dueRaw = val("#f-due");
+  const goalDateRaw = val("#f-goaldate");
   const type = draft.type || "spend";
 
   const patch = {
@@ -2140,6 +2226,7 @@ function doSaveCategory(id){
     type,
     planned: type === "save" ? monthlySave : primary,
     goal: type === "save" ? primary : 0,
+    goalDate: type === "save" && /^\d{4}-\d{2}$/.test(goalDateRaw) ? goalDateRaw : null,
     dueDay: type === "save" || !dueRaw ? null : clamp(parseInt(dueRaw, 10), 1, 31)
   };
 
@@ -2180,6 +2267,54 @@ function deleteCategory(id){
     }
     save(); render(); toast(used ? "Archived" : "Deleted");
   });
+}
+
+function sheetQuickLinks(){
+  const cats = state.categories.filter(c => !c.archived).sort((a, b) => a.order - b.order);
+  const row = (label, sub, url) => `
+    <div class="item" style="flex-direction:column;align-items:stretch;gap:8px">
+      <div>
+        <div class="item-title">${esc(label)}</div>
+        <div class="item-sub">${esc(sub)}</div>
+      </div>
+      <div class="row" style="gap:8px">
+        <input class="input" readonly value="${esc(url)}"
+               style="flex:1;font-family:var(--font-mono);font-size:11px;padding:9px 10px">
+        <button class="btn" style="width:auto;padding:9px 13px" data-copy="${esc(url)}">Copy</button>
+      </div>
+    </div>`;
+
+  openSheet("Quick-add links", `
+    <p class="small muted" style="margin:14px 0 4px">
+      iPhone can't give a web app a real home-screen widget — that needs a native
+      app. This is the way round it: a Shortcut that opens one of these links puts
+      one-tap capture on your home screen, in the widget area, or on Back Tap.
+    </p>
+
+    <h2 class="sec">Set one up on iPhone<span class="sec-rule"></span></h2>
+    <ol class="small muted" style="margin:12px 0 4px;padding-left:20px;line-height:1.75">
+      <li>Open <b>Shortcuts</b> → <b>+</b> → <b>Add Action</b></li>
+      <li>Search <b>Ask for Input</b>, set Input Type to <b>Number</b>, prompt “How much?”</li>
+      <li>Add <b>Open URLs</b>, paste a link below, then put the <b>Provided Input</b>
+          variable at the very end of it</li>
+      <li>Name it (“Takeaway”), then <b>Add to Home Screen</b> from the share menu</li>
+    </ol>
+    <p class="tiny muted" style="margin:10px 0 0">
+      Links ending <b>&amp;go</b> record straight away and show a receipt. Drop the
+      <b>&amp;go</b> and it opens the sheet for you to check first.
+    </p>
+
+    <h2 class="sec">Money in<span class="sec-rule"></span></h2>
+    <div class="list">
+      ${row("Add money", "Opens with the amount ready", quickActionURL("add", null, {ask:true}))}
+    </div>
+
+    <h2 class="sec">Spend from a pocket<span class="sec-rule"></span></h2>
+    <div class="list">
+      ${cats.map(c => row(c.name, "Records against " + c.name + " immediately",
+                          quickActionURL("spend", c, {ask:true, go:true}))).join("")}
+    </div>
+  `, { focus:false });
 }
 
 function sheetArchived(){
@@ -2391,6 +2526,9 @@ function sheetSettings(){
     <button class="set-item" data-act="import">
       <span class="grow"><b>Restore from a backup</b><div class="tiny muted">Replaces what's here now</div></span>${svgChevron()}
     </button>
+    <button class="set-item" data-act="quicklinks">
+      <span class="grow"><b>Quick-add links</b><div class="tiny muted">One-tap capture from your home screen</div></span>${svgChevron()}
+    </button>
     <button class="set-item" data-act="archived">
       <span class="grow"><b>Archived pockets</b><div class="tiny muted">${state.categories.filter(c => c.archived).length} archived</div></span>${svgChevron()}
     </button>
@@ -2583,6 +2721,89 @@ function resetAll(){
 }
 
 /* ============================================================
+   Quick actions from the URL
+   ------------------------------------------------------------
+   iOS will not let a web app put a real widget on the home screen —
+   that needs a native WidgetKit app. What it does allow is a Shortcut
+   that opens a URL, and a Shortcut can sit on the home screen, in the
+   widget area, or on Back Tap. So the app accepts its actions as a
+   hash, and a Shortcut becomes the quick-capture button:
+
+     #spend=Takeaways&amount=12.50&go     record it and show a receipt
+     #spend=Groceries                     open the sheet, pocket chosen
+     #add&amount=1000                     money in, ready to confirm
+
+   The hash is consumed on arrival so a refresh cannot fire it twice.
+   ============================================================ */
+function findCat(key){
+  if (!key) return null;
+  const k = String(key).trim().toLowerCase();
+  const cats = state.categories.filter(c => !c.archived);
+  return cats.find(c => c.id === key)
+      || cats.find(c => c.name.toLowerCase() === k)
+      || cats.find(c => c.name.toLowerCase().indexOf(k) === 0)
+      || null;
+}
+
+function quickActionURL(action, cat, opts){
+  const o = opts || {};
+  const base = location.origin + location.pathname;
+  let h = "#" + action;
+  if (cat) h += "=" + encodeURIComponent(cat.name);
+  if (o.ask) h += "&amount=";                    // Shortcut appends the number
+  if (o.go) h += "&go";
+  return base + h;
+}
+
+function runQuickAction(){
+  const raw = location.hash.replace(/^#/, "");
+  if (!raw) return;
+  try { history.replaceState(null, "", location.pathname + location.search); } catch (e) {}
+
+  const q = {};
+  raw.split("&").forEach(part => {
+    if (!part) return;
+    const i = part.indexOf("=");
+    const key = decodeURIComponent(i < 0 ? part : part.slice(0, i)).toLowerCase();
+    q[key] = i < 0 ? "" : decodeURIComponent(part.slice(i + 1).replace(/\+/g, " "));
+  });
+
+  const amount = parseAmount(q.amount);
+  const note = q.note || "";
+
+  if ("spend" in q) {
+    const cat = findCat(q.spend);
+    if ("go" in q && amount > 0) {
+      addTx({ kind:"expense", amount:amount, catId: cat ? cat.id : null, note:note });
+      ui.tab = "home";
+      render();
+      toast("−" + fmt(amount) + (cat ? " from " + cat.name : ""));
+      return;
+    }
+    sheetSpend(cat ? cat.id : null, amount > 0 ? amount : null);
+  } else if ("add" in q) {
+    if ("go" in q && amount > 0) {
+      addTx({ kind:"income", amount:amount, note:note });
+      ui.tab = "home";
+      render();
+      toast("Added " + fmt(amount));
+      return;
+    }
+    sheetIncome();
+    if (amount > 0 && sheetEl()) sheetEl().querySelector("#f-amount").value = String(amount);
+  } else if ("assign" in q) {
+    const cat = findCat(q.assign);
+    sheetAllocate(cat ? cat.id : null);
+  } else if ("move" in q) {
+    sheetMove();
+  }
+  if (note && sheetEl()) {
+    const nf = sheetEl().querySelector("#f-note");
+    if (nf) nf.value = note;
+  }
+}
+
+/* ============================================================
    Events
    ============================================================ */
 document.addEventListener("click", e => {
@@ -2612,6 +2833,18 @@ document.addEventListener("click", e => {
 
   const unpay = e.target.closest("[data-unpay]");
   if (unpay) { const [id, mk] = unpay.dataset.unpay.split("|"); unpayBill(id, mk); return; }
+
+  const copyBtn = e.target.closest("[data-copy]");
+  if (copyBtn) {
+    const text = copyBtn.dataset.copy;
+    const field = copyBtn.parentElement.querySelector("input");
+    if (field) { field.focus(); field.select(); field.setSelectionRange(0, text.length); }
+    const ok = () => toast("Link copied");
+    const nope = () => toast("Select the text and copy it manually");
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(ok, nope);
+    else { try { document.execCommand("copy") ? ok() : nope(); } catch (err) { nope(); } }
+    return;
+  }
 
   const restore = e.target.closest("[data-restore]");
   if (restore) {
@@ -2657,6 +2890,7 @@ document.addEventListener("click", e => {
     case "editcat": sheetEditCategory(id); break;
     case "delcat": deleteCategory(id); break;
     case "archived": sheetArchived(); break;
+    case "quicklinks": sheetQuickLinks(); break;
     case "plan": sheetPlan(); break;
     case "history": sheetHistory(); break;
     case "settings": sheetSettings(); break;
@@ -2689,6 +2923,8 @@ state = load();
 ui.statsMonth = thisMonth();
 render();
 startSync();
+runQuickAction();
+window.addEventListener("hashchange", runQuickAction);
 
 /* Follow the device / viewer if they change theme while the app is open. */
 if (themeQuery) {

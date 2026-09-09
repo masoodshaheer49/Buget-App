@@ -71,7 +71,7 @@ relabelling money you already have.
 | Kind | For | What it tracks |
 |---|---|---|
 | **Fixed bill** | Rent, tuition, car payment, insurance | A set amount with a **due day** each month. Shows up on the Bills tab and warns you when it's overdue or the pocket is short. |
-| **Spending** | Groceries, transport, fun | A monthly budget you draw down. Turns red when you go over. |
+| **Spending** | Groceries, transport, fun | A monthly budget you draw down. Turns red when you go over. Can carry a **repeating charge** — an amount and the weekdays it falls on — that fills itself in. |
 | **Savings** | Tuition, trips, emergency fund | A pot that builds towards a **goal**, optionally by a **target month**. Give it €4,600 by next September and it works out the monthly figure, offers to set it, and tells you whether you are keeping up. |
 
 ### The tabs
@@ -85,6 +85,20 @@ relabelling money you already have.
   pocket. Scroll back through past months with the arrows.
 
 ---
+
+## Repeating charges
+
+A bus fare paid three times a week is not worth typing three times a week. A
+spending pocket can carry a rule — an amount, the weekdays it lands on, and a
+date to count from — and the app fills the entries in whenever you open it.
+Set "€2 on Mon/Wed/Fri from 1 September" and the fares appear, including the
+ones already gone by.
+
+The generated ids are **derived from the pocket and the date** rather than
+random, which is what makes this safe under sync: two devices produce the same
+id for the same fare, so the merge folds them into one entry instead of charging
+twice. Deleting one leaves a tombstone under that same id, so it stays deleted
+instead of reappearing on the next open. Backfill reaches 92 days at most.
 
 ## Quick capture from the home screen
 

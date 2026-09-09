@@ -591,7 +591,8 @@ function defaultState(){
     settings: { currency:"EUR", theme:"auto", name:"", hideSetup:false, demo:false,
                 sync:true, updatedAt:now },
     categories: DEFAULT_CATEGORIES.map((c, i) => ({
-      id: uid(), order: i, archived:false, goal:0, goalDate:null, dueDay:null, updatedAt:now, ...c
+      id: uid(), order: i, archived:false, goal:0, goalDate:null, dueDay:null,
+      repeat:null, updatedAt:now, ...c
     })),
     tx: [],
     // Deletions have to travel between devices too, or a merge on the other
@@ -718,6 +719,7 @@ function migrate(data){
     planned: num(c.planned),
     goal: num(c.goal),
     goalDate: /^\d{4}-\d{2}$/.test(c.goalDate || "") ? c.goalDate : null,
+    repeat: normaliseRepeat(c.repeat),
     dueDay: c.dueDay == null ? null : clamp(Math.round(num(c.dueDay)), 1, 31),
     archived: !!c.archived
   }));
@@ -727,6 +729,7 @@ function migrate(data){
     amount: num(t.amount),
     date: t.date || todayISO(),
     note: t.note ? String(t.note) : "",
+    auto: !!t.auto,
     catId: t.catId || null,             // expense/allocate target pocket (null = unassigned cash)
     fromId: t.fromId || null,           // move source
     toId: t.toId || null,               // move destination
@@ -746,6 +749,22 @@ function saveLocal(){
   }, 60);
 }
 function save(){ saveLocal(); schedulePush(); }
+
+/** A repeating charge: an amount, the weekdays it lands on, and where to
+    start counting from. Anything malformed becomes "no rule". */
+function normaliseRepeat(r){
+  if (!r || typeof r !== "object") return null;
+  const amount = round2(num(r.amount));
+  const days = Array.isArray(r.days)
+    ? r.days.map(Number).filter(d => d >= 0 && d <= 6).sort()
+    : [];
+  if (amount <= 0 || !days.length) return null;
+  return {
+    amount: amount,
+    days: days.filter((d, i, a) => a.indexOf(d) === i),
+    start: /^\d{4}-\d{2}-\d{2}$/.test(r.start || "") ? r.start : todayISO()
+  };
+}
 
 /** Sanitise a tombstone map to {id: timestamp}, dropping very old entries. */
 function tsMap(raw){
@@ -1384,7 +1403,9 @@ function txRow(t){
   } else if (t.kind === "expense") {
     icon = cat ? (cat.icon || markFor(cat)) : "OUT";
     title = t.note || (cat ? cat.name : "Spending");
-    sub = (cat ? cat.name : "Unassigned") + (t.billPeriod ? " · bill paid" : "");
+    sub = (cat ? cat.name : "Unassigned")
+        + (t.billPeriod ? " · bill paid" : "")
+        + (t.auto ? " · repeating" : "");
     amt = "−" + fmt(t.amount);
   } else if (t.kind === "allocate") {
     icon = cat ? (cat.icon || markFor(cat)) : "ASN";
@@ -1463,7 +1484,8 @@ function pocketCard(c, d){
     else sub = "No goal set";
   }
   else if (c.type === "bill") sub = c.dueDay ? `Due the ${ordinal(c.dueDay)} · ${fmt(c.planned,{compact:true})}/mo` : `${fmt(c.planned,{compact:true})}/mo`;
-  else sub = `${fmt(spent,{compact:true})} spent of ${fmt(c.planned,{compact:true})} this month`;
+  else sub = `${fmt(spent,{compact:true})} spent of ${fmt(c.planned,{compact:true})} this month`
+           + (c.repeat ? ` · ${repeatSummary(c.repeat)}` : "");
 
   let badge = "";
   if (c.type === "bill" && c.dueDay) {
@@ -2049,7 +2071,8 @@ function sheetCategory(id){
 function sheetEditCategory(id){
   const c = id
     ? state.categories.find(x => x.id === id)
-    : { id:null, name:"", icon:"", color:PALETTE[state.categories.length % PALETTE.length], type:"spend", planned:0, goal:0, goalDate:null, dueDay:null };
+    : { id:null, name:"", icon:"", color:PALETTE[state.categories.length % PALETTE.length],
+        type:"spend", planned:0, goal:0, goalDate:null, dueDay:null, repeat:null };
   if (!c) return;
 
   openSheet(id ? "Edit pocket" : "New pocket", `
@@ -2095,6 +2118,26 @@ function sheetEditCategory(id){
       </div>
     </div>
 
+    <div class="field" id="f-repeat-wrap" ${c.type === "spend" ? "" : "hidden"}>
+      <label>Repeats — fills itself in</label>
+      <div class="row" style="gap:10px;align-items:center">
+        <span class="item-sub" style="margin:0">${esc(currencyMeta()[1])}</span>
+        <input id="f-rep-amount" class="input" type="text" inputmode="decimal"
+               placeholder="0.00" style="width:110px;padding:10px 11px"
+               value="${c.repeat ? num(c.repeat.amount) || "" : ""}">
+        <span class="item-sub grow" style="margin:0">each of these days</span>
+      </div>
+      <div class="picker" id="f-rep-days" style="margin-top:9px">
+        ${[1,2,3,4,5,6,0].map(d => `
+          <button type="button" data-day="${d}" style="min-width:38px;justify-content:center"
+            aria-pressed="${!!(c.repeat && c.repeat.days.indexOf(d) > -1)}">${DAY_LABELS[d]}</button>`).join("")}
+      </div>
+      <label style="margin-top:14px">Counting from</label>
+      <input id="f-rep-start" class="input" type="date"
+             value="${esc(c.repeat ? c.repeat.start : isoOf(new Date(new Date().getFullYear(), new Date().getMonth(), 1)))}">
+      <div class="tiny muted" style="margin-top:7px" id="f-rep-hint"></div>
+    </div>
+
     <div class="field" id="f-due-wrap" ${c.type === "save" ? "hidden" : ""}>
       <label>Due day of the month</label>
       <select id="f-due" class="input">
@@ -2130,6 +2173,7 @@ function sheetEditCategory(id){
     s.querySelector("#f-amount-label").textContent = type === "save" ? "Savings goal" : "Monthly amount";
     s.querySelector("#f-monthly-save").hidden = type !== "save";
     s.querySelector("#f-goaldate-wrap").hidden = type !== "save";
+    s.querySelector("#f-repeat-wrap").hidden = type !== "spend";
     s.querySelector("#f-due-wrap").hidden = type === "save";
     s.querySelector("#f-type-hint").textContent =
       type === "bill" ? "A fixed payment that repeats — rent, tuition, car, insurance." :
@@ -2155,6 +2199,29 @@ function sheetEditCategory(id){
     use.hidden = !offer;
     if (offer) use.dataset.amount = String(p.perMonth);
   }
+  function repeatPreview(){
+    const hint = s.querySelector("#f-rep-hint");
+    if (!hint) return;
+    const r = normaliseRepeat({
+      amount: parseAmount(s.querySelector("#f-rep-amount").value),
+      days: [...s.querySelectorAll('#f-rep-days [aria-pressed="true"]')].map(b => Number(b.dataset.day)),
+      start: s.querySelector("#f-rep-start").value
+    });
+    if (!r) { hint.textContent = "Leave the amount at zero for no repeating charge."; return; }
+    const perWeek = round2(r.amount * r.days.length);
+    hint.textContent = fmt(perWeek) + " a week · about " + fmt(round2(perWeek * 52 / 12)) +
+      " a month. Entries are filled in from " + parseISO(r.start).toLocaleDateString(undefined,
+        { day:"numeric", month:"long" }) + " onwards.";
+  }
+  s.querySelector("#f-rep-days").addEventListener("click", e => {
+    const b = e.target.closest("[data-day]"); if (!b) return;
+    b.setAttribute("aria-pressed", b.getAttribute("aria-pressed") === "true" ? "false" : "true");
+    repeatPreview();
+  });
+  s.addEventListener("input", repeatPreview);
+  s.querySelector("#f-rep-start").addEventListener("change", repeatPreview);
+  repeatPreview();
+
   const useBtn = s.querySelector("#f-pace-use");
   if (useBtn) useBtn.addEventListener("click", () => {
     s.querySelector("#f-monthly").value = useBtn.dataset.amount || "";
@@ -2200,6 +2267,11 @@ function doSaveCategory(id){
   const dueRaw = val("#f-due");
   const goalDateRaw = val("#f-goaldate");
   const type = draft.type || "spend";
+  const repeat = type !== "spend" ? null : normaliseRepeat({
+    amount: parseAmount(val("#f-rep-amount")),
+    days: [...sheetEl().querySelectorAll('#f-rep-days [aria-pressed="true"]')].map(b => Number(b.dataset.day)),
+    start: val("#f-rep-start")
+  });
 
   const patch = {
     name,
@@ -2210,6 +2282,7 @@ function doSaveCategory(id){
     planned: type === "save" ? monthlySave : primary,
     goal: type === "save" ? primary : 0,
     goalDate: type === "save" && /^\d{4}-\d{2}$/.test(goalDateRaw) ? goalDateRaw : null,
+    repeat: repeat,
     dueDay: type === "save" || !dueRaw ? null : clamp(parseInt(dueRaw, 10), 1, 31)
   };
 
@@ -2225,7 +2298,10 @@ function doSaveCategory(id){
     }, patch));
     toast("Pocket created");
   }
-  save(); closeSheet(); render();
+  save();
+  const made = runRepeats();
+  closeSheet(); render();
+  if (made) toast("Filled in " + made + " repeating entr" + (made === 1 ? "y" : "ies"));
 }
 
 function deleteCategory(id){
@@ -2704,6 +2780,66 @@ function resetAll(){
 }
 
 /* ============================================================
+   Repeating charges
+   ------------------------------------------------------------
+   A bus fare you pay three times a week is not worth typing three
+   times a week. A pocket can carry a rule — an amount and the
+   weekdays it falls on — and the app fills the entries in when you
+   open it, back to the rule's start date.
+
+   The ids are DERIVED from the pocket and the date rather than
+   random, which is what makes this safe under sync: your phone and
+   your laptop both generate the same id for the same fare, so the
+   merge folds them into one entry instead of charging you twice.
+   Deleting one leaves a tombstone under that same id, so it stays
+   deleted rather than reappearing on the next open.
+   ============================================================ */
+const REPEAT_BACKFILL_DAYS = 92;
+
+function repeatId(cat, iso){ return "r-" + cat.id + "-" + iso; }
+
+function runRepeats(){
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const seen = {};
+  state.tx.forEach(t => seen[t.id] = 1);
+  const floor = today.getTime() - REPEAT_BACKFILL_DAYS * 86400000;
+  let made = 0;
+
+  state.categories.forEach(c => {
+    const r = c.archived ? null : normaliseRepeat(c.repeat);
+    if (!r) return;
+    const start = parseISO(r.start);
+    const from = new Date(Math.max(start.getTime(), floor));
+    from.setHours(0, 0, 0, 0);
+    for (const d = new Date(from); d <= today; d.setDate(d.getDate() + 1)) {
+      if (r.days.indexOf(d.getDay()) < 0) continue;
+      const iso = isoOf(d);
+      const id = repeatId(c, iso);
+      if (seen[id] || state.tombstones[id]) continue;   // already there, or deleted on purpose
+      state.tx.push({
+        id: id, kind: "expense", amount: r.amount, date: iso, note: c.name,
+        catId: c.id, fromId: null, toId: null, billPeriod: null, auto: true
+      });
+      seen[id] = 1;
+      made++;
+    }
+  });
+
+  if (made) save();
+  return made;
+}
+
+const DAY_LABELS = ["S", "M", "T", "W", "T", "F", "S"];
+const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+function repeatSummary(r){
+  if (!r) return "";
+  const every = r.days.length === 7 ? "every day"
+    : r.days.length === 5 && r.days.join() === "1,2,3,4,5" ? "weekdays"
+    : r.days.map(d => DAY_NAMES[d]).join(", ");
+  return fmt(r.amount, {compact:true}) + " " + every;
+}
+
+/* ============================================================
    Quick actions from the URL
    ------------------------------------------------------------
    iOS will not let a web app put a real widget on the home screen —
@@ -2906,6 +3042,11 @@ state = load();
 ui.statsMonth = thisMonth();
 render();
 startSync();
+if (runRepeats()) render();
+document.addEventListener("visibilitychange", () => {
+  // Reopened after a few days: catch the fares up before anything is read.
+  if (!document.hidden && runRepeats()) render();
+});
 runQuickAction();
 window.addEventListener("hashchange", runQuickAction);
 

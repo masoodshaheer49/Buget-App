@@ -439,6 +439,26 @@ select.input{
 .set-item b{font-weight:600;font-size:14.5px}
 
 /* status dot */
+/* Runway — the headline on Stats, given its own weight */
+.runway{padding:22px 0 18px;border-top:1px solid var(--ink);border-bottom:1px solid var(--rule)}
+.rw-lab{font-family:var(--font-mono);font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-3)}
+.rw-big{font-family:var(--font-text);font-size:clamp(32px,9.5vw,42px);font-weight:700;letter-spacing:-.04em;line-height:1.05;margin:8px 0 6px}
+.rw-big span{font-size:.5em;font-weight:600;color:var(--ink-2);letter-spacing:-.02em}
+.rw-sub{font-size:14px;color:var(--ink-2)}
+.rw-sub b{color:var(--ink);font-weight:600}
+.rw-note{font-family:var(--font-mono);font-size:11px;color:var(--ink-3);margin-top:9px;line-height:1.5}
+
+/* Pace — month elapsed against plan consumed */
+.pace{padding:14px 0 0}
+.pace-row{display:flex;align-items:center;gap:12px;padding:7px 0}
+.pace-lab{font-family:var(--font-mono);font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3);width:88px;flex:none}
+.pace-row .bar{flex:1;margin:0;height:6px}
+.pace-val{font-size:12.5px;width:38px;text-align:right;flex:none}
+.pace-said{margin-top:12px;padding:12px 13px;border-radius:2px;font-size:13.5px;line-height:1.55}
+.pace-said b{font-weight:600}
+.okbox{background:color-mix(in srgb,var(--pos) var(--tint),transparent);color:var(--ink)}
+.warnbox{background:color-mix(in srgb,var(--neg) var(--tint),transparent);color:var(--ink)}
+
 .syncdot{width:7px;height:7px;border-radius:50%;background:var(--ink-3);flex:none}
 .syncdot.green{background:var(--pos)}
 .syncdot.amber{background:var(--due)}
@@ -928,6 +948,54 @@ function incomeIn(mk){
   let total = 0;
   for (const t of state.tx) if (t.kind === "income" && monthOfISO(t.date) === mk) total += num(t.amount);
   return round2(total);
+}
+
+/**
+ * How fast money is actually leaving, netted against anything coming in,
+ * over a window of at most the last 30 days. This is the figure a fixed pot
+ * with no wage lives or dies by, and the one the app could not answer.
+ */
+function burnRate(){
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  let firstISO = null;
+  state.tx.forEach(t => { if (!firstISO || t.date < firstISO) firstISO = t.date; });
+  if (!firstISO) return { days: 0, spent: 0, income: 0, perDay: 0 };
+
+  const first = parseISO(firstISO);
+  const span = clamp(Math.round((today - first) / 86400000) + 1, 1, 30);
+  const from = new Date(today); from.setDate(from.getDate() - span + 1);
+  const fromISO = isoOf(from), todayISOv = isoOf(today);
+
+  let spent = 0, income = 0;
+  state.tx.forEach(t => {
+    if (t.date < fromISO || t.date > todayISOv) return;
+    if (t.kind === "expense") spent += num(t.amount);
+    else if (t.kind === "income") income += num(t.amount);
+  });
+  return {
+    days: span,
+    spent: round2(spent),
+    income: round2(income),
+    // Spending only. Netting income off would let a one-off lump — the very
+    // money the runway is counting down — pass for a wage.
+    perDay: round2(spent / span)
+  };
+}
+
+/** This month's spending grouped by what you wrote on it, biggest first — so
+    "€17.48, twice" reads as a habit rather than as two separate entries. */
+function topNotes(mk, limit){
+  const groups = {};
+  state.tx.forEach(t => {
+    if (t.kind !== "expense" || monthOfISO(t.date) !== mk) return;
+    const label = (t.note || "").trim() || "Unlabelled";
+    const key = label.toLowerCase();
+    if (!groups[key]) groups[key] = { label: label, total: 0, count: 0 };
+    groups[key].total = round2(groups[key].total + num(t.amount));
+    groups[key].count++;
+  });
+  return Object.keys(groups).map(k => groups[k])
+    .sort((a, b) => b.total - a.total).slice(0, limit || 5);
 }
 
 /* ---- bills ----
@@ -1734,9 +1802,16 @@ function billFullRow(b, d){
 /* ---------- Stats ---------- */
 function viewStats(d){
   const mk = ui.statsMonth || thisMonth();
+  const isNow = mk === thisMonth();
   const income = incomeIn(mk);
   const spent = spentIn(mk);
   const planned = round2(d.cats.reduce((s,c) => s + num(c.planned), 0));
+
+  const parts = mk.split("-").map(Number);
+  const dim = daysInMonth(parts[0], parts[1] - 1);
+  const dayNow = isNow ? new Date().getDate() : dim;
+  const elapsed = dayNow / dim;
+  const projected = elapsed > 0 ? round2(spent / elapsed) : spent;
 
   const rows = d.cats.map(c => ({ c, spent: spentIn(mk, c.id) }))
     .filter(r => r.spent > 0 || num(r.c.planned) > 0)
@@ -1749,8 +1824,6 @@ function viewStats(d){
   for (let i = 5; i >= 0; i--) months.push(shiftMonth(mk, -i));
   const series = months.map(m => spentIn(m));
   const max = Math.max(1, ...series);
-  // Average only over months you actually used, so a new install doesn't
-  // read as "you spend a third of what you really do".
   const active = series.filter(v => v > 0);
   const avg = active.length ? round2(active.reduce((a,b) => a+b, 0) / active.length) : 0;
 
@@ -1759,14 +1832,115 @@ function viewStats(d){
     <button data-month="-1" aria-label="Previous month">${svgChev("left")}</button>
     <div class="m">${esc(monthLabel(mk, true))}</div>
     <button data-month="1" aria-label="Next month">${svgChev("right")}</button>
-  </div>
+  </div>`;
 
-  <div class="tiles" style="margin-top:12px">
+  /* ---- the one figure that matters when money is finite ---- */
+  if (isNow) {
+    const b = burnRate();
+    if (b.perDay > 0.005 && d.cash > 0) {
+      const daysLeft = Math.floor(d.cash / b.perDay);
+      const out = new Date(); out.setDate(out.getDate() + daysLeft);
+      const weeks = Math.floor(daysLeft / 7);
+      html += `
+      <div class="runway">
+        <div class="rw-lab">If nothing more comes in</div>
+        <div class="rw-big num">${daysLeft} <span>day${daysLeft === 1 ? "" : "s"}</span></div>
+        <div class="rw-sub">Until <b>${esc(out.toLocaleDateString(undefined, { weekday:"long", day:"numeric", month:"long" }))}</b>${weeks >= 1 ? " · about " + weeks + " week" + (weeks === 1 ? "" : "s") : ""}</div>
+        <div class="rw-note">${esc(fmt(b.perDay))} a day — ${esc(fmt(b.spent))} spent over the last ${b.days} day${b.days === 1 ? "" : "s"}.${b.income > 0 ? " " + esc(fmt(b.income)) + " came in over the same period; this figure does not assume it repeats." : ""}</div>
+      </div>`;
+    }
+  }
+
+  html += `
+  <div class="tiles" style="margin-top:${isNow ? "16px" : "12px"}">
     <div class="tile"><div class="t-lab">In</div><div class="t-val num pos">${esc(fmt(income, {compact:true}))}</div></div>
     <div class="tile"><div class="t-lab">Out</div><div class="t-val num">${esc(fmt(spent, {compact:true}))}</div></div>
     <div class="tile"><div class="t-lab">Net</div><div class="t-val num ${income - spent < 0 ? "neg" : "pos"}">${esc(fmt(round2(income - spent), {compact:true}))}</div></div>
-  </div>
+  </div>`;
 
+  /* ---- pace: are you spending faster than the month is passing? ---- */
+  if (planned > 0) {
+    const usedPct = clamp(spent / planned * 100, 0, 100);
+    const elapsedPct = clamp(elapsed * 100, 0, 100);
+    const ahead = projected > planned;
+    html += `
+    <h2 class="sec">Pace<span class="sec-rule"></span></h2>
+    <div class="pace">
+      <div class="pace-row">
+        <span class="pace-lab">Month gone</span>
+        <span class="bar"><i style="width:${elapsedPct}%;background:var(--ink-3)"></i></span>
+        <span class="pace-val num">${Math.round(elapsedPct)}%</span>
+      </div>
+      <div class="pace-row">
+        <span class="pace-lab">Plan used</span>
+        <span class="bar"><i style="width:${usedPct}%;background:${ahead ? "var(--neg)" : "var(--ink)"}"></i></span>
+        <span class="pace-val num">${Math.round(usedPct)}%</span>
+      </div>
+      <div class="pace-said ${ahead ? "warnbox" : "okbox"}">
+        ${isNow
+          ? `On pace for <b>${esc(fmt(projected))}</b> by ${esc(monthLabel(mk).split(" ")[0])} ${dim}, against <b>${esc(fmt(planned))}</b> planned.
+             ${ahead ? "That is <b>" + esc(fmt(round2(projected - planned))) + " over</b>." : "That is <b>" + esc(fmt(round2(planned - projected))) + " under</b>."}`
+          : `Spent <b>${esc(fmt(spent))}</b> against <b>${esc(fmt(planned))}</b> planned.`}
+      </div>
+    </div>`;
+  }
+
+  /* ---- where it actually goes, biggest first, with its share ---- */
+  const totalOut = round2(spent);
+  html += `<h2 class="sec">Where it goes<span class="sec-rule"></span></h2>`;
+  const spending = rows.filter(r => r.spent > 0);
+  if (!spending.length && unassignedSpend === 0) {
+    html += `<div class="empty">Nothing recorded for this month.</div>`;
+  } else {
+    html += `<div class="list">`;
+    spending.forEach(r => {
+      const share = totalOut > 0 ? r.spent / totalOut * 100 : 0;
+      const plan = num(r.c.planned);
+      const over = plan > 0 && r.spent > plan;
+      html += `
+      <div class="item" style="flex-direction:column;align-items:stretch;gap:0;--accent-c:${esc(r.c.color)}">
+        <div class="row">
+          ${catMark(r.c)}
+          <span class="grow">
+            <span class="item-title ellip">${esc(r.c.name)}</span>
+            <div class="item-sub">${Math.round(share)}% of everything${plan > 0 ? " · " + esc(fmt(plan, {compact:true})) + " planned" : ""}</div>
+          </span>
+          <span class="item-amt num ${over ? "neg" : ""}">${esc(fmt(r.spent, {compact:true}))}</span>
+        </div>
+        <span class="bar"><i style="width:${share}%;background:${over ? "var(--neg)" : "var(--ink)"}"></i></span>
+      </div>`;
+    });
+    if (unassignedSpend > 0) {
+      html += `
+      <div class="item">
+        <span class="ico">--</span>
+        <span class="grow"><span class="item-title">Unassigned spending</span>
+        <div class="item-sub">${Math.round(totalOut > 0 ? unassignedSpend / totalOut * 100 : 0)}% · not in a pocket</div></span>
+        <span class="item-amt num">${esc(fmt(unassignedSpend, {compact:true}))}</span>
+      </div>`;
+    }
+    html += `</div>`;
+  }
+
+  /* ---- the same thing bought again and again ---- */
+  const repeats = topNotes(mk, 5).filter(g => g.count > 1 || g.total > 0);
+  if (repeats.length) {
+    html += `
+    <h2 class="sec">Most spent on<span class="sec-rule"></span></h2>
+    <div class="list">
+      ${repeats.map(g => `
+        <div class="item">
+          <span class="grow">
+            <span class="item-title ellip">${esc(g.label)}</span>
+            <div class="item-sub">${g.count} time${g.count === 1 ? "" : "s"}${g.count > 1 ? " · " + esc(fmt(round2(g.total / g.count), {compact:true})) + " each" : ""}</div>
+          </span>
+          <span class="item-amt num">${esc(fmt(g.total, {compact:true}))}</span>
+        </div>`).join("")}
+    </div>`;
+  }
+
+  /* ---- the long view ---- */
+  html += `
   <h2 class="sec">Last 6 months<span class="sec-rule"></span></h2>
   <div style="padding-top:6px">
     <div class="chart">
@@ -1783,47 +1957,8 @@ function viewStats(d){
       <span>Average${active.length && active.length < series.length ? " (" + active.length + " active month" + (active.length === 1 ? "" : "s") + ")" : ""}</span>
       <b class="num">${esc(fmt(avg, {compact:true}))}/mo</b>
     </div>
-  </div>
-
-  <h2 class="sec">Plan vs actual<span class="sec-rule"></span></h2>`;
-
-  if (!rows.length && unassignedSpend === 0) {
-    html += `<div class="empty">Nothing recorded for this month.</div>`;
-    return html;
-  }
-
-  html += `<div class="list">`;
-  for (const r of rows) {
-    const plan = num(r.c.planned);
-    const pct = plan > 0 ? clamp(r.spent / plan * 100, 0, 100) : (r.spent > 0 ? 100 : 0);
-    const over = plan > 0 && r.spent > plan;
-    html += `
-    <div class="item" style="flex-direction:column;align-items:stretch;gap:0;--accent-c:${esc(r.c.color)}">
-      <div class="row">
-        ${catMark(r.c)}
-        <span class="grow">
-          <span class="item-title ellip" style="font-size:14.5px">${esc(r.c.name)}</span>
-          <div class="item-sub">${plan > 0 ? "of " + esc(fmt(plan, {compact:true})) + " planned" : "no plan set"}</div>
-        </span>
-        <span class="item-amt num ${over ? "neg" : ""}" style="font-size:15px">${esc(fmt(r.spent, {compact:true}))}</span>
-      </div>
-      <span class="bar"><i style="width:${pct}%;background:${over ? "var(--neg)" : "var(--ink)"}"></i></span>
-    </div>`;
-  }
-  if (unassignedSpend > 0) {
-    html += `
-    <div class="item">
-      <span class="ico">--</span>
-      <span class="grow"><span class="item-title">Unassigned spending</span>
-      <div class="item-sub">Not linked to a pocket</div></span>
-      <span class="item-amt num">${esc(fmt(unassignedSpend, {compact:true}))}</span>
-    </div>`;
-  }
-  html += `</div>
-  <div style="border-top:1px solid var(--ink);margin-top:2px">
-    <div class="spread" style="padding:12px 0 6px"><span class="item-sub" style="margin:0">Total planned this month</span><b class="num">${esc(fmt(planned))}</b></div>
-    <div class="spread" style="padding-bottom:12px"><span class="item-sub" style="margin:0">Total spent</span><b class="num ${spent > planned && planned > 0 ? "neg" : ""}">${esc(fmt(spent))}</b></div>
   </div>`;
+
   return html;
 }
 

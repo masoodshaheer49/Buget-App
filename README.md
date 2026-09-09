@@ -81,10 +81,26 @@ relabelling money you already have.
 - **Pockets** — every pocket with its balance and progress. Add, edit, archive.
 - **Bills** — the month's due dates grouped into *Overdue*, *Unpaid* and *Paid*,
   plus whether you've actually set the money aside for them.
-- **Stats** — income vs spending, a six-month trend, and plan-vs-actual per
-  pocket. Scroll back through past months with the arrows.
+- **Stats** — leads with **how long your money lasts** if nothing more comes in,
+  then pace (how far through the month against how much of the plan is gone and
+  what that projects to), where it goes ranked by share, what you bought
+  repeatedly, and a six-month trend. Arrows scroll back through past months.
 
 ---
+
+## Runway
+
+For a fixed pot with no wage, the only figure that matters is how long it lasts,
+so Stats opens with it: today's balance divided by recent daily spending, with
+the date attached.
+
+The rate is **spending only, never netted against income**. Netting would let a
+one-off lump — the very money being counted down — pass for a wage and report a
+draining account as stable. Income over the window is still named underneath, so
+the figure can be read in context rather than taken as a forecast.
+
+The window is at most the last 30 days, and at least however long the budget has
+existed, so it says something useful from the first week.
 
 ## Bills that don't follow the calendar
 

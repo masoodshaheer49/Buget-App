@@ -1003,6 +1003,25 @@ function paidAmount(cat, mk){
     .reduce((s, t) => s + num(t.amount), 0));
 }
 /** All bill occurrences for a month, sorted by due date. */
+/**
+ * Mark each unpaid occurrence with whether the pocket actually covers it.
+ * One occurrence per month could ask the balance directly; two 28-day
+ * recharges in one month cannot, or €20 in the pocket reports both as
+ * ready. Coverage is therefore cumulative down the list.
+ */
+function annotateCoverage(rows, balances){
+  const claimed = {};
+  rows.forEach(r => {
+    if (r.paid) { r.covered = true; r.shortBy = 0; return; }
+    const id = r.cat.id;
+    claimed[id] = round2((claimed[id] || 0) + num(r.cat.planned));
+    const bal = round2(balances[id] || 0);
+    r.shortBy = round2(Math.max(0, claimed[id] - bal));
+    r.covered = num(r.cat.planned) > 0 && r.shortBy <= 0.005;
+  });
+  return rows;
+}
+
 function billsFor(mk, cats){
   const today = new Date(); today.setHours(0, 0, 0, 0);
   const rows = [];
@@ -1022,6 +1041,7 @@ function upcomingBills(cats, limit){
   const list = billsFor(mk, cats).concat(billsFor(shiftMonth(mk, 1), cats))
     .filter(b => !b.paid)
     .sort((a,b) => a.due - b.due);
+  annotateCoverage(list, derive().balance);
   return limit ? list.slice(0, limit) : list;
 }
 
@@ -1431,7 +1451,7 @@ function byDateDesc(a, b){
 function billRow(b, d){
   const c = b.cat;
   const bal = d.balance[c.id] || 0;
-  const covered = bal >= c.planned - 0.005 && c.planned > 0;
+  const covered = b.covered;
   let badge;
   if (b.paid) badge = `<span class="badge green">Paid</span>`;
   else if (b.overdue) badge = `<span class="badge red">${Math.abs(b.days)}d overdue</span>`;
@@ -1444,7 +1464,8 @@ function billRow(b, d){
     ${catMark(c)}
     <span class="grow">
       <span class="item-title ellip">${esc(c.name)}</span>
-      <div class="item-sub">${b.paid ? "Settled " + esc(monthLabel(b.mk)) : (covered ? "Money is ready" : "Pocket has " + esc(fmt(bal, {compact:true})))}</div>
+      <div class="item-sub">${b.paid ? "Settled" : (covered ? "Money is ready"
+        : "Short " + esc(fmt(b.shortBy, {compact:true})) + " · pocket has " + esc(fmt(bal, {compact:true})))}</div>
     </span>
     <span style="text-align:right">
       <div class="item-amt num">${esc(fmt(c.planned, {compact:true}))}</div>
@@ -1644,11 +1665,17 @@ function ordinal(n){
 /* ---------- Bills ---------- */
 function viewBills(d){
   const mk = ui.statsMonth || thisMonth();
-  const bills = billsFor(mk, d.cats);
+  const bills = annotateCoverage(billsFor(mk, d.cats), d.balance);
   const total = round2(bills.reduce((s,b) => s + num(b.cat.planned), 0));
   const paid = round2(bills.filter(b => b.paid).reduce((s,b) => s + paidAmount(b.cat, mk), 0));
   const remaining = round2(bills.filter(b => !b.paid).reduce((s,b) => s + num(b.cat.planned), 0));
-  const ready = round2(bills.filter(b => !b.paid).reduce((s,b) => s + Math.min(num(b.cat.planned), Math.max(0, d.balance[b.cat.id] || 0)), 0));
+  // Cap each pocket's contribution at its balance, however many of its
+  // occurrences fall in this month.
+  const needByCat = {};
+  bills.filter(b => !b.paid).forEach(b =>
+    needByCat[b.cat.id] = round2((needByCat[b.cat.id] || 0) + num(b.cat.planned)));
+  const ready = round2(Object.keys(needByCat).reduce((s, id) =>
+    s + Math.min(needByCat[id], Math.max(0, d.balance[id] || 0)), 0));
 
   let html = `
   <div class="monthnav">
@@ -1696,7 +1723,7 @@ function viewBills(d){
 function billFullRow(b, d){
   const c = b.cat;
   const bal = round2(d.balance[c.id] || 0);
-  const short = round2(Math.max(0, num(c.planned) - bal));
+  const short = num(b.shortBy);
   let note;
   if (b.paid) note = "Paid " + fmt(paidAmount(c, b.mk), {compact:true});
   else if (short > 0.005) note = "Short " + fmt(short, {compact:true}) + " in pocket";

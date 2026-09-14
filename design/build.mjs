@@ -731,3 +731,205 @@ for (const [file, body] of Object.entries(SCREENS)) {
   writeFileSync(join(OUT, file), artboard(body));
   console.log("wrote", file);
 }
+
+/* ------------------------------------------------------------------
+   pockets-screens.html — one standalone page carrying all five
+   screens and the system they are built from, for handing to a
+   design tool. No scripts, no build step, nothing to install.
+   ------------------------------------------------------------------ */
+const PAGE_CSS = `
+  :root{color-scheme:light}
+  body{
+    margin:0;background:#E2E5E3;color:#14181A;
+    font-family:'Archivo',-apple-system,'Segoe UI',Roboto,system-ui,sans-serif;
+    font-size:15px;line-height:1.5;-webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:1400px;margin:0 auto;padding:48px 24px 80px}
+  h1{font-size:30px;font-weight:700;letter-spacing:-.035em;margin:0 0 10px}
+  h2{
+    font-family:'IBM Plex Mono',ui-monospace,Menlo,monospace;
+    font-size:11px;font-weight:500;letter-spacing:.16em;text-transform:uppercase;
+    color:#6D7679;margin:56px 0 0;padding-bottom:10px;border-bottom:1px solid #C8CFCB;
+  }
+  p{max-width:62ch;margin:0 0 14px;color:#3B4347}
+  .lede{font-size:17px;color:#14181A}
+  code{font-family:'IBM Plex Mono',ui-monospace,Menlo,monospace;font-size:.9em;background:#D3D8D5;padding:1px 5px;border-radius:2px}
+  ul{max-width:62ch;padding-left:20px;color:#3B4347}
+  li{margin:7px 0}
+  li b{color:#14181A}
+
+  .cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:28px;margin-top:24px}
+
+  /* token swatches */
+  .swatches{display:grid;grid-template-columns:repeat(auto-fill,minmax(148px,1fr));gap:10px;margin-top:22px}
+  .sw{background:#fff;border:1px solid #C8CFCB;border-radius:2px;overflow:hidden}
+  .sw .chipc{height:52px}
+  .sw .meta{
+    padding:8px 10px;font-family:'IBM Plex Mono',ui-monospace,Menlo,monospace;
+    font-size:10px;letter-spacing:.04em;line-height:1.6;
+  }
+  .sw .meta b{display:block;font-weight:500;text-transform:uppercase;letter-spacing:.1em}
+  .sw .meta span{color:#6D7679}
+
+  /* type ramp */
+  .ramp{background:#fff;border:1px solid #C8CFCB;border-radius:2px;padding:4px 18px;margin-top:22px}
+  .ramp > div{display:flex;align-items:baseline;gap:18px;padding:13px 0;border-bottom:1px solid #E6E9E7}
+  .ramp > div:last-child{border-bottom:0}
+  .ramp .k{
+    font-family:'IBM Plex Mono',ui-monospace,Menlo,monospace;
+    font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:#6D7679;
+    width:168px;flex:none;white-space:nowrap;
+  }
+
+  /* phone frames */
+  .frames{display:flex;flex-wrap:wrap;gap:40px 34px;margin-top:30px}
+  .frame{flex:none}
+  .frame .cap{
+    font-family:'IBM Plex Mono',ui-monospace,Menlo,monospace;
+    font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:#6D7679;
+    margin-bottom:10px;
+  }
+  .frame .dev{
+    box-sizing:content-box;
+    width:390px;height:844px;max-width:100%;border-radius:12px;overflow:hidden;
+    border:1px solid #BFC6C3;box-shadow:0 1px 2px rgba(0,0,0,.06),0 12px 28px rgba(0,0,0,.09);
+  }
+  @media (max-width:520px){
+    .wrap{padding:28px 16px 56px}
+    .frame{max-width:100%}
+    .frame .dev{box-sizing:border-box}
+  }
+`.trim();
+
+const swatch = (name, hex, note) => `
+      <div class="sw">
+        <div class="chipc" style="background:${hex}"></div>
+        <div class="meta"><b>${name}</b><span>${hex} · ${note}</span></div>
+      </div>`;
+
+const device = (cap, body, dark) => `
+    <div class="frame">
+      <div class="cap">${cap}</div>
+      <div class="dev"><div class="s${dark ? " dk" : ""}">${body.trim()}</div></div>
+    </div>`;
+
+const SHEET = `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pockets — screens and design system</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700&amp;family=IBM+Plex+Mono:wght@400;500&amp;display=swap">
+<style>
+${PAGE_CSS}
+
+/* ==================================================================
+   The app's own stylesheet, copied from index.html. Class names and
+   values match the shipping code — a redesign expressed against these
+   tokens drops straight back in.
+   ================================================================== */
+${CSS}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>Pockets</h1>
+  <p class="lede">A budgeting app for one student in Ireland. Money arrives, gets labelled into
+  pockets, and leaves. Balances are never stored — every figure on these screens is recomputed
+  from a flat list of transactions.</p>
+
+  <h2>Brief</h2>
+  <p>Below are the five screens as they are built today, at true phone size, with real figures.
+  Redesign them. The markup and CSS are in this file and use the same class names as the app,
+  so a change made here can be read straight back into the code.</p>
+
+  <div class="cols">
+    <div>
+      <p style="font-weight:600;margin-bottom:8px">Keep</p>
+      <ul>
+        <li><b>Colour means something or it is not there.</b> Green is money in, red is money out,
+        amber is something owed. A pocket's colour appears only as its 3px rule and its monogram —
+        never as a gauge fill or a decorative tint.</li>
+        <li><b>Not everything is a card.</b> Rows are separated by hairlines. Border, fill and
+        radius are spent on the one thing that needs lifting.</li>
+        <li><b>Figures are set in the mono face</b> with tabular figures so columns line up, and
+        cents sit a shade back so the euros read first.</li>
+        <li><b>Both themes.</b> Every colour is a token with a light and a dark value.</li>
+        <li><b>Monograms, not emoji</b> — two letters from the pocket name, widening to three when
+        two pockets would collide.</li>
+      </ul>
+    </div>
+    <div>
+      <p style="font-weight:600;margin-bottom:8px">Open to change</p>
+      <ul>
+        <li>Hierarchy and rhythm — what leads each screen, how much air it gets.</li>
+        <li>The type pairing, if something carries the voice better.</li>
+        <li>How a pocket's progress is drawn. It is a 2px square track today.</li>
+        <li>The tab bar and the quick-action strip.</li>
+        <li>Stats in month one, when there is no history to chart yet.</li>
+      </ul>
+      <p style="font-weight:600;margin:22px 0 8px">Constraints</p>
+      <ul>
+        <li>It runs offline as a single HTML file — no frameworks, no icon packs, no images.</li>
+        <li>Hit targets stay at 44px or more.</li>
+        <li>One hand, on a phone, usually in a hurry.</li>
+      </ul>
+    </div>
+  </div>
+
+  <h2>Colour</h2>
+  <div class="swatches">
+${[
+  ["Paper", "#EFF1F0", "page ground"],
+  ["Surface", "#FFFFFF", "the one lifted block"],
+  ["Sunken", "#E6E9E7", "gauge track"],
+  ["Rule", "#DCE0DE", "hairline"],
+  ["Ink", "#14181A", "text, active state"],
+  ["Ink 2", "#565F63", "secondary"],
+  ["Ink 3", "#868F92", "labels"],
+  ["Positive", "#16704F", "money in"],
+  ["Negative", "#A32A28", "over, owed"],
+  ["Due", "#8A5A00", "something owed"]
+].map(s => swatch(s[0], s[1], s[2])).join("")}
+  </div>
+  <p style="margin-top:18px">Dark redefines the same ten tokens:
+  <code>--bg #0C0E0F</code>, <code>--ink #F0F2F1</code>, <code>--pos #4FBF8B</code>,
+  <code>--neg #F2685F</code>, <code>--due #D9A03C</code>. Pocket colours are fixed hex and do
+  not change between themes.</p>
+
+  <h2>Pocket colours</h2>
+  <div class="swatches">
+${Object.values(P).map(p => swatch(p.name, p.c, p.mark)).join("")}
+  </div>
+
+  <h2>Type</h2>
+  <div class="ramp">
+    <div><span class="k">Balance · 54/700</span><span style="font-size:54px;font-weight:700;letter-spacing:-.04em">€986</span></div>
+    <div><span class="k">Title · 19/600</span><span style="font-size:19px;font-weight:600;letter-spacing:-.025em">Good afternoon, Shaheer</span></div>
+    <div><span class="k">Row · 14.5/600</span><span style="font-size:14.5px;font-weight:600;letter-spacing:-.012em">Owes Money to sister</span></div>
+    <div><span class="k">Body · 15/400</span><span style="font-size:15px">Money is ready to pay this one.</span></div>
+    <div><span class="k">Figure · mono 14.5</span><span class="num" style="font-size:14.5px;font-weight:500">−€8.25</span></div>
+    <div><span class="k">Sub · mono 11</span><span class="num" style="font-size:11px;color:#565F63">Short €20 · pocket has €20</span></div>
+    <div><span class="k">Label · mono 10.5</span><span class="num" style="font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:#868F92">Due soon</span></div>
+  </div>
+
+  <h2>The five screens</h2>
+  <div class="frames">
+${device("Home", HOME)}
+${device("Pockets", POCKETS)}
+${device("Bills", BILLS)}
+${device("Stats", STATS)}
+${device("Spend sheet", SPEND)}
+${device("Home · dark", HOME, true)}
+  </div>
+
+</div>
+</body>
+</html>
+`;
+
+writeFileSync(join(OUT, "pockets-screens.html"), SHEET);
+console.log("wrote pockets-screens.html");

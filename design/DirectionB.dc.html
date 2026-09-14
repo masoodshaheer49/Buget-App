@@ -1,0 +1,76 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700&amp;family=IBM+Plex+Mono:wght@400;500&amp;display=swap">
+  <style>
+    body{margin:0;background:#fff}
+    a{color:#111}a:hover{color:#555}
+    .w{
+      width:390px;height:844px;overflow:hidden;position:relative;
+      background:#fff;color:#111;
+      font-family:'Archivo',system-ui,sans-serif;font-size:15px;line-height:1.45;
+      display:flex;flex-direction:column;
+    }
+    .w *,.w *::before,.w *::after{box-sizing:border-box}
+    .m{font-family:'IBM Plex Mono',ui-monospace,Menlo,monospace;font-variant-numeric:tabular-nums}
+    .tag{
+      font-family:'IBM Plex Mono',ui-monospace,Menlo,monospace;
+      font-size:9.5px;letter-spacing:.18em;text-transform:uppercase;color:#999;
+    }
+    /* One idea: the screen answers one question, everything else recedes. */
+    .row{display:flex;align-items:center;gap:14px;padding:19px 0}
+    .row + .row{border-top:1px solid #eee}
+    .bar3{width:3px;align-self:stretch;background:#ddd;flex:none}
+    .amt{font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:15px;margin-left:auto}
+  </style>
+</helmet>
+<div class="w">
+
+  <div style="display:flex;align-items:baseline;justify-content:space-between;padding:16px 24px 0">
+    <span class="tag">Direction B · One number</span>
+    <span class="tag">Home</span>
+  </div>
+
+  <!-- The balance owns the top third; the runway is promoted to sit with it. -->
+  <div style="padding:54px 24px 40px">
+    <div class="tag" style="margin-bottom:14px">You have</div>
+    <div class="m" style="font-size:62px;font-weight:500;letter-spacing:-.05em;line-height:.92">986<span style="color:#bbb">.25</span></div>
+    <div style="margin-top:20px;font-size:17px;color:#555;max-width:270px;line-height:1.4">
+      That lasts <b style="color:#111;font-weight:600">70 days</b> at what you have been spending.
+    </div>
+  </div>
+
+  <div style="padding:0 24px">
+    <div style="height:1px;background:#111"></div>
+  </div>
+
+  <div style="padding:0 24px;flex:1;min-height:0;overflow:hidden">
+    <div style="display:flex;align-items:baseline;justify-content:space-between;padding:22px 0 4px">
+      <span class="tag">Spoken for</span>
+      <span class="tag">406.25 of 986.25</span>
+    </div>
+
+    <div class="row"><span class="bar3" style="background:#888"></span><span>Tuition</span><span class="amt">150.00</span></div>
+    <div class="row"><span class="bar3" style="background:#C1642B"></span><span>Owes sister</span><span class="amt">97.56</span></div>
+    <div class="row"><span class="bar3"></span><span>Sligo–Dublin</span><span class="amt">52.00</span></div>
+    <div class="row"><span class="bar3"></span><span>Groceries</span><span class="amt">41.75</span></div>
+    <div class="row"><span class="bar3"></span><span>Phone</span><span class="amt">20.00</span></div>
+  </div>
+
+  <!-- One action. Everything else lives a tap deeper. -->
+  <div style="padding:16px 24px 26px;background:#fff">
+    <div style="background:#111;color:#fff;border-radius:3px;padding:17px;text-align:center;
+                font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:11.5px;
+                letter-spacing:.16em;text-transform:uppercase">Record something</div>
+  </div>
+
+</div>
+</x-dc>
+</body>
+</html>

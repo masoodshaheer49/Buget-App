@@ -1,0 +1,35 @@
+{
+  "artboards": [
+    { "file": "Main.dc.html",       "x": 0,    "y": 0,    "w": 390, "h": 844, "title": "Home" },
+    { "file": "Pockets.dc.html",    "x": 470,  "y": 0,    "w": 390, "h": 844, "title": "Pockets" },
+    { "file": "Bills.dc.html",      "x": 940,  "y": 0,    "w": 390, "h": 844, "title": "Bills" },
+    { "file": "Stats.dc.html",      "x": 1410, "y": 0,    "w": 390, "h": 844, "title": "Stats" },
+    { "file": "SpendSheet.dc.html", "x": 1880, "y": 0,    "w": 390, "h": 844, "title": "Spend sheet" },
+    { "file": "DirectionA.dc.html", "x": 0,    "y": 1120, "w": 390, "h": 844, "title": "Direction A — Ledger" },
+    { "file": "DirectionB.dc.html", "x": 470,  "y": 1120, "w": 390, "h": 844, "title": "Direction B — One number" }
+  ],
+  "annotations": [
+    {
+      "id": "as-built",
+      "x": 2370,
+      "y": 0,
+      "w": 320,
+      "text": "The app as it stands, rebuilt from index.html — same tokens, same type, same spacing, real figures from 14 Sep.\n\nThese five are the thing to push on. Restyle anything here and it is a proposal you can hand back to me to put in the code.\n\nThe fold is real: each frame is a true 390x844 phone, so what falls below the tab bar is what you would have to scroll for."
+    },
+    {
+      "id": "dir-a",
+      "x": 0,
+      "y": 920,
+      "w": 390,
+      "text": "DIRECTION A — LEDGER\n\nTakes the statement idea all the way. Rules run edge to edge, no cards at all, figures in one true column with a share column beside them.\n\nWhy: it is the most honest version of what this app already is, and it reads fast once you know it.\n\nCosts: dense and a bit severe. Nothing is friendly about it, and the running-share column is one more thing to learn."
+    },
+    {
+      "id": "dir-b",
+      "x": 470,
+      "y": 920,
+      "w": 390,
+      "text": "DIRECTION B — ONE NUMBER\n\nThe opposite. The balance owns the top third, the runway sits with it as a sentence, and everything else goes quiet. One action button.\n\nWhy: you mostly open this to answer one question — how am I doing. This answers it before you read anything.\n\nCosts: far less on screen, so more scrolling and more taps, and Bills and Stats would need the same treatment to match."
+    }
+  ],
+  "launch": { "view": "canvas" }
+}

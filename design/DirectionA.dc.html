@@ -1,0 +1,95 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700&amp;family=IBM+Plex+Mono:wght@400;500&amp;display=swap">
+  <style>
+    body{margin:0;background:#fff}
+    a{color:#111}a:hover{color:#555}
+    .w{
+      width:390px;height:844px;overflow:hidden;position:relative;
+      background:#fff;color:#111;
+      font-family:'Archivo',system-ui,sans-serif;font-size:15px;line-height:1.45;
+    }
+    .w *,.w *::before,.w *::after{box-sizing:border-box}
+    .m{font-family:'IBM Plex Mono',ui-monospace,Menlo,monospace;font-variant-numeric:tabular-nums}
+    .tag{
+      font-family:'IBM Plex Mono',ui-monospace,Menlo,monospace;
+      font-size:9.5px;letter-spacing:.18em;text-transform:uppercase;color:#999;
+    }
+    /* Rules run the full width — no gutter. That is the whole idea. */
+    .rule{height:1px;background:#ddd}
+    .rule.hard{background:#111}
+    .pad{padding:0 18px}
+    .ledger{display:grid;grid-template-columns:46px 1fr 74px 82px;align-items:baseline;
+            gap:0 10px;padding:11px 18px;font-size:13px}
+    .ledger .d{font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:10px;color:#999;letter-spacing:.04em}
+    .ledger .a{text-align:right;font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:13px}
+    .ledger .b{text-align:right;font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:13px;color:#999}
+    .swatch{display:inline-block;width:3px;height:11px;vertical-align:-1px;margin-right:7px;background:#bbb}
+  </style>
+</helmet>
+<div class="w">
+
+  <div style="display:flex;align-items:baseline;justify-content:space-between;padding:16px 18px 12px">
+    <span class="tag">Direction A · Ledger</span>
+    <span class="tag">Home</span>
+  </div>
+  <div class="rule hard"></div>
+
+  <!-- The balance is a column total, not a hero. -->
+  <div style="display:flex;align-items:flex-end;justify-content:space-between;padding:18px">
+    <div>
+      <div class="tag" style="margin-bottom:6px">Balance carried</div>
+      <div class="tag" style="color:#bbb">14 Sep 2026</div>
+    </div>
+    <div class="m" style="font-size:30px;font-weight:500;letter-spacing:-.03em">986.25</div>
+  </div>
+  <div class="rule"></div>
+
+  <div style="display:grid;grid-template-columns:1fr 1fr 1fr">
+    <div style="padding:12px 18px"><div class="tag">Assigned</div><div class="m" style="margin-top:5px">406.25</div></div>
+    <div style="padding:12px 12px;border-left:1px solid #ddd"><div class="tag">Free</div><div class="m" style="margin-top:5px">580.00</div></div>
+    <div style="padding:12px 12px;border-left:1px solid #ddd"><div class="tag">Runway</div><div class="m" style="margin-top:5px">70 d</div></div>
+  </div>
+  <div class="rule hard"></div>
+
+  <div class="pad" style="padding-top:16px;padding-bottom:7px"><span class="tag">Pockets · by share of plan</span></div>
+  <div class="rule"></div>
+
+  <div class="ledger"><span class="d">SAVE</span><span><span class="swatch" style="background:#888"></span>Tuition</span><span class="a">150.00</span><span class="b">3%</span></div>
+  <div class="rule"></div>
+  <div class="ledger"><span class="d">DEBT</span><span><span class="swatch" style="background:#C1642B"></span>Owes sister</span><span class="a">97.56</span><span class="b">—</span></div>
+  <div class="rule"></div>
+  <div class="ledger"><span class="d">SPEND</span><span><span class="swatch"></span>Sligo–Dublin</span><span class="a">52.00</span><span class="b">50%</span></div>
+  <div class="rule"></div>
+  <div class="ledger"><span class="d">SPEND</span><span><span class="swatch"></span>Groceries</span><span class="a">41.75</span><span class="b">3%</span></div>
+  <div class="rule"></div>
+  <div class="ledger"><span class="d">BILL</span><span><span class="swatch"></span>Phone</span><span class="a">20.00</span><span class="b">100%</span></div>
+  <div class="rule"></div>
+  <div class="ledger"><span class="d">SPEND</span><span><span class="swatch" style="background:#C1642B"></span>Leap Card</span><span class="a">17.00</span><span class="b">110%</span></div>
+  <div class="rule hard"></div>
+
+  <div class="ledger" style="padding-top:13px;padding-bottom:13px">
+    <span class="d"></span><span style="font-weight:600">Total set aside</span><span class="a" style="font-weight:500">406.25</span><span class="b"></span>
+  </div>
+  <div class="rule hard"></div>
+
+  <!-- Actions as a ruled strip, same grammar as the rows. -->
+  <div style="position:absolute;left:0;right:0;bottom:0;border-top:1px solid #111;background:#fff;
+              display:grid;grid-template-columns:repeat(4,1fr)">
+    <div style="padding:16px 0;text-align:center" class="tag">Add</div>
+    <div style="padding:16px 0;text-align:center;border-left:1px solid #ddd" class="tag">Assign</div>
+    <div style="padding:16px 0;text-align:center;border-left:1px solid #ddd" class="tag">Spend</div>
+    <div style="padding:16px 0;text-align:center;border-left:1px solid #ddd;color:#111" class="tag">More</div>
+  </div>
+
+</div>
+</x-dc>
+</body>
+</html>

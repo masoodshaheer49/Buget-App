@@ -1,0 +1,380 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700&amp;family=IBM+Plex+Mono:wght@400;500&amp;display=swap">
+  <style>
+body{margin:0;background:#EFF1F0}
+a{color:#14181A;text-decoration:none}
+a:hover{color:#565F63}
+
+.s{
+  --bg:#EFF1F0;--surface:#FFFFFF;--surface-2:#F7F8F7;--sunken:#E6E9E7;
+  --rule:#DCE0DE;--rule-strong:#BFC6C3;
+  --ink:#14181A;--ink-2:#565F63;--ink-3:#868F92;
+  --pos:#16704F;--neg:#A32A28;--due:#8A5A00;--tint:8%;
+  --pad:20px;
+  --font-text:'Archivo',-apple-system,'Segoe UI',Roboto,system-ui,sans-serif;
+  --font-mono:'IBM Plex Mono',ui-monospace,Menlo,Consolas,monospace;
+}
+.s.dk{
+  --bg:#0C0E0F;--surface:#131617;--surface-2:#191D1F;--sunken:#080A0B;
+  --rule:#262B2D;--rule-strong:#3C4346;
+  --ink:#F0F2F1;--ink-2:#9AA3A6;--ink-3:#6B7477;
+  --pos:#4FBF8B;--neg:#F2685F;--due:#D9A03C;--tint:16%;
+}
+
+.s{
+  width:390px;height:844px;position:relative;overflow:hidden;
+  display:flex;flex-direction:column;
+  background:var(--bg);color:var(--ink);
+  font-family:var(--font-text);font-size:15px;line-height:1.45;
+  -webkit-font-smoothing:antialiased;
+}
+.s *,.s *::before,.s *::after{box-sizing:border-box}
+.s button{font:inherit;color:inherit;background:none;border:0;padding:0;text-align:left}
+
+.num{font-family:var(--font-mono);font-variant-numeric:tabular-nums}
+.cents{opacity:.55}
+
+/* topbar */
+.topbar{
+  flex:none;padding:18px var(--pad) 12px;
+  display:flex;align-items:flex-end;gap:12px;
+  background:var(--bg);border-bottom:1px solid var(--rule);
+}
+.topbar-txt{flex:1;min-width:0}
+.topbar-title{font-size:19px;font-weight:600;letter-spacing:-.025em;line-height:1.15}
+.topbar-sub{
+  font-family:var(--font-mono);font-size:10.5px;color:var(--ink-3);
+  text-transform:uppercase;letter-spacing:.1em;margin-top:4px;
+}
+.icon-btn{
+  width:34px;height:34px;flex:none;border-radius:2px;
+  display:grid;place-items:center;color:var(--ink-2);
+  border:1px solid var(--rule);background:var(--surface);
+}
+
+/* scroll area — the fold is real, this is a 390x844 phone */
+.view{flex:1;min-height:0;overflow:hidden;padding:0 var(--pad) 28px}
+
+/* type utilities */
+.sec{
+  font-family:var(--font-mono);
+  font-size:10.5px;font-weight:500;letter-spacing:.14em;text-transform:uppercase;
+  color:var(--ink-3);margin:30px 0 0;padding-bottom:8px;
+  display:flex;align-items:baseline;gap:12px;
+  border-bottom:1px solid var(--rule);
+}
+.sec .sec-rule{flex:1}
+.sec button{
+  font-family:var(--font-mono);font-size:10.5px;letter-spacing:.1em;
+  color:var(--ink-2);text-transform:uppercase;border-bottom:1px solid var(--rule-strong);
+}
+.muted{color:var(--ink-2)}
+.tiny{font-size:12px}
+.pos{color:var(--pos)}
+.neg{color:var(--neg)}
+.warn{color:var(--due)}
+.row{display:flex;align-items:center;gap:12px}
+.spread{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.grow{flex:1;min-width:0}
+.ellip{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.card{background:var(--surface);border:1px solid var(--rule);padding:16px}
+
+/* statement head */
+.hero{padding:26px 0 0}
+.hero-label{
+  font-family:var(--font-mono);font-size:10.5px;letter-spacing:.16em;
+  text-transform:uppercase;color:var(--ink-3);
+}
+.hero-amount{
+  font-size:54px;font-weight:700;letter-spacing:-.04em;
+  line-height:1;margin:10px 0 18px;font-variant-numeric:tabular-nums;
+}
+.hero-amount .cents{opacity:.4;font-weight:600}
+.hero-chips{
+  display:grid;grid-template-columns:1fr 1fr;
+  border-top:1px solid var(--ink);border-bottom:1px solid var(--rule);
+}
+.chip{padding:11px 0;display:block}
+.chip + .chip{border-left:1px solid var(--rule);padding-left:14px}
+.chip i{
+  display:block;font-style:normal;
+  font-family:var(--font-mono);font-size:10px;letter-spacing:.12em;
+  text-transform:uppercase;color:var(--ink-3);margin-bottom:3px;
+}
+.chip b{
+  font-family:var(--font-mono);font-size:15px;font-weight:500;
+  font-variant-numeric:tabular-nums;letter-spacing:-.01em;
+}
+
+/* control strip */
+.quick{display:grid;grid-template-columns:repeat(4,1fr);border-bottom:1px solid var(--rule)}
+.quick button{
+  padding:14px 2px 13px;display:flex;flex-direction:column;align-items:center;gap:7px;
+  font-family:var(--font-mono);font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--ink-2);
+}
+.quick button + button{border-left:1px solid var(--rule)}
+.quick svg{color:var(--ink)}
+
+/* rows */
+.list{display:block}
+.item{
+  display:flex;align-items:center;gap:13px;width:100%;
+  padding:14px 0 14px 13px;position:relative;
+  border-bottom:1px solid var(--rule);
+}
+.item::before{
+  content:"";position:absolute;left:0;top:10px;bottom:10px;width:3px;
+  background:var(--accent-c,transparent);
+}
+.list .item:last-child{border-bottom:0}
+.ico{
+  width:36px;height:36px;flex:none;border-radius:2px;
+  display:grid;place-items:center;
+  font-family:var(--font-mono);font-size:12px;font-weight:500;letter-spacing:.02em;
+  color:var(--accent-c,var(--ink-2));
+  background:color-mix(in srgb, var(--accent-c, var(--ink-3)) var(--tint), transparent);
+}
+.item-title{font-weight:600;font-size:14.5px;letter-spacing:-.012em;display:block}
+.item-sub{
+  font-family:var(--font-mono);font-size:11px;color:var(--ink-2);
+  margin-top:3px;letter-spacing:-.01em;
+}
+.item-amt{
+  font-family:var(--font-mono);font-size:14.5px;font-weight:500;
+  text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums;
+}
+.item-amt small{
+  display:block;font-size:10px;font-weight:400;color:var(--ink-3);
+  margin-top:3px;text-transform:uppercase;letter-spacing:.08em;
+}
+
+.bar{height:2px;background:var(--sunken);overflow:hidden;margin-top:10px;display:block}
+.bar > i{display:block;height:100%}
+
+.badge{
+  font-family:var(--font-mono);font-size:9.5px;font-weight:500;
+  letter-spacing:.1em;text-transform:uppercase;
+  padding:3px 6px;border-radius:2px;white-space:nowrap;
+  background:var(--sunken);color:var(--ink-2);display:inline-block;
+}
+.badge.red{background:color-mix(in srgb,var(--neg) var(--tint),transparent);color:var(--neg)}
+.badge.amber{background:color-mix(in srgb,var(--due) var(--tint),transparent);color:var(--due)}
+.badge.green{background:color-mix(in srgb,var(--pos) var(--tint),transparent);color:var(--pos)}
+.badge.accent{background:var(--sunken);color:var(--ink)}
+
+.seg{display:flex;gap:0;border-bottom:1px solid var(--rule);margin:20px 0 0}
+.seg button{
+  flex:1;padding:10px 4px;text-align:center;
+  font-family:var(--font-mono);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--ink-3);border-bottom:2px solid transparent;margin-bottom:-1px;
+}
+.seg button[aria-selected="true"]{color:var(--ink);border-bottom-color:var(--ink)}
+
+/* figures divided by rules */
+.tiles{display:grid;grid-template-columns:repeat(3,1fr);border-bottom:1px solid var(--rule)}
+.tile{padding:14px 0}
+.tile + .tile{border-left:1px solid var(--rule);padding-left:14px}
+.tile .t-lab{
+  font-family:var(--font-mono);font-size:9.5px;letter-spacing:.12em;
+  text-transform:uppercase;color:var(--ink-3);
+}
+.tile .t-val{
+  font-family:var(--font-mono);font-size:16px;font-weight:500;
+  letter-spacing:-.02em;margin-top:6px;font-variant-numeric:tabular-nums;
+}
+
+.monthnav{
+  display:flex;align-items:center;justify-content:space-between;gap:8px;
+  padding:16px 0 14px;border-bottom:1px solid var(--rule);
+}
+.monthnav .m{font-size:16px;font-weight:600;letter-spacing:-.02em}
+.monthnav button{
+  width:32px;height:32px;border:1px solid var(--rule);border-radius:2px;
+  display:grid;place-items:center;color:var(--ink-2);background:var(--surface);
+}
+
+/* chart */
+.chart{display:flex;align-items:flex-end;gap:10px;height:118px;padding-top:8px;border-bottom:1px solid var(--ink)}
+.chart .col{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%}
+.chart .cval{font-family:var(--font-mono);font-size:9px;color:var(--ink-3);margin-bottom:5px;white-space:nowrap}
+.chart .cbar{width:100%;max-width:22px;min-height:2px;background:var(--rule-strong)}
+.chart .cbar.now{background:var(--ink)}
+.chart-x{display:flex;gap:10px;padding-top:7px}
+.chart-x span{
+  flex:1;text-align:center;
+  font-family:var(--font-mono);font-size:9.5px;letter-spacing:.06em;
+  text-transform:uppercase;color:var(--ink-3);
+}
+.chart-x span.now{color:var(--ink)}
+
+/* runway + pace */
+.runway{padding:22px 0 18px;border-top:1px solid var(--ink);border-bottom:1px solid var(--rule)}
+.rw-lab{font-family:var(--font-mono);font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-3)}
+.rw-big{font-size:42px;font-weight:700;letter-spacing:-.04em;line-height:1.05;margin:8px 0 6px}
+.rw-big span{font-size:.5em;font-weight:600;color:var(--ink-2);letter-spacing:-.02em}
+.rw-sub{font-size:14px;color:var(--ink-2)}
+.rw-sub b{color:var(--ink);font-weight:600}
+.rw-note{font-family:var(--font-mono);font-size:11px;color:var(--ink-3);margin-top:9px;line-height:1.5}
+.pace{padding:14px 0 0}
+.pace-row{display:flex;align-items:center;gap:12px;padding:7px 0}
+.pace-lab{font-family:var(--font-mono);font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3);width:88px;flex:none}
+.pace-row .bar{flex:1;margin:0;height:6px}
+.pace-val{font-size:12.5px;width:38px;text-align:right;flex:none}
+.pace-said{margin-top:12px;padding:12px 13px;border-radius:2px;font-size:13.5px;line-height:1.55}
+.pace-said b{font-weight:600}
+.okbox{background:color-mix(in srgb,var(--pos) var(--tint),transparent);color:var(--ink)}
+.warnbox{background:color-mix(in srgb,var(--neg) var(--tint),transparent);color:var(--ink)}
+
+/* tab bar */
+.tabbar{
+  position:absolute;left:0;right:0;bottom:0;z-index:50;height:64px;
+  display:grid;grid-template-columns:repeat(5,1fr);align-items:stretch;
+  background:var(--surface);border-top:1px solid var(--rule);
+}
+.tabbar button{
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;
+  font-family:var(--font-mono);font-size:9px;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--ink-3);border-top:2px solid transparent;margin-top:-1px;
+}
+.tabbar button[aria-selected="true"]{color:var(--ink);border-top-color:var(--ink)}
+.tabbar .fab{
+  align-self:center;justify-self:center;
+  width:42px;height:42px;border-radius:3px;border-top:0;margin:0;
+  background:var(--ink);color:var(--bg);display:grid;place-items:center;
+}
+
+/* sheets */
+.backdrop{position:absolute;inset:0;z-index:60;background:rgba(8,10,11,.5)}
+.sheet{
+  position:absolute;left:0;right:0;bottom:0;z-index:61;
+  background:var(--bg);border:1px solid var(--rule);border-bottom:0;border-radius:4px 4px 0 0;
+  display:flex;flex-direction:column;max-height:92%;
+}
+.sheet-grab{width:34px;height:3px;background:var(--rule-strong);margin:9px auto 2px;flex:none;border-radius:2px}
+.sheet-head{padding:8px var(--pad) 12px;display:flex;align-items:center;gap:12px;flex:none;border-bottom:1px solid var(--rule)}
+.sheet-head h3{margin:0;font-size:19px;font-weight:600;letter-spacing:-.03em;flex:1}
+.sheet-body{padding:0 var(--pad) 24px;overflow:hidden}
+.field{margin:18px 0}
+.field label{
+  display:block;font-family:var(--font-mono);font-size:10px;letter-spacing:.12em;
+  text-transform:uppercase;color:var(--ink-3);margin-bottom:7px;
+}
+.input{
+  width:100%;background:var(--surface);border:1px solid var(--rule);border-radius:2px;
+  padding:12px 13px;font-size:16px;
+}
+.input.ph{color:var(--ink-3)}
+.amount-input{display:flex;align-items:baseline;gap:10px;border-bottom:2px solid var(--ink);padding:2px 0 6px}
+.amount-input .cur{font-family:var(--font-mono);font-size:22px;color:var(--ink-3)}
+.amount-input .val{
+  flex:1;font-family:var(--font-mono);font-size:30px;font-weight:500;
+  letter-spacing:-.03em;font-variant-numeric:tabular-nums;padding:4px 0;
+}
+.btn{
+  width:100%;padding:14px;border-radius:2px;text-align:center;display:block;
+  font-family:var(--font-mono);font-size:12px;font-weight:500;
+  letter-spacing:.1em;text-transform:uppercase;
+  background:var(--surface);border:1px solid var(--rule-strong);color:var(--ink);
+}
+.btn.primary{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+.btn-row{display:flex;gap:8px;margin-top:8px}
+  </style>
+</helmet>
+<div class="s {{themeClass}}">
+<header class="topbar">
+      <div class="topbar-txt">
+        <div class="topbar-title">Statistics</div>
+        <div class="topbar-sub">Where your money goes</div>
+      </div>
+      <button class="icon-btn" aria-label="Settings"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9c.14.35.4.63.73.79H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>
+    </header>
+  <main class="view">
+    <div class="monthnav">
+      <button aria-label="Previous month"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 6l-6 6 6 6"/></svg></button>
+      <div class="m">September 2026</div>
+      <button aria-label="Next month"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg></button>
+    </div>
+
+    <div class="runway">
+      <div class="rw-lab">If nothing more comes in</div>
+      <div class="rw-big num">70 <span>days</span></div>
+      <div class="rw-sub">Until <b>Monday, 23 November</b> · about 10 weeks</div>
+      <div class="rw-note">€13.97 a day — €125.75 spent over the last 9 days. €1,112.00 came in over the same period; this figure does not assume it repeats.</div>
+    </div>
+
+    <div class="tiles" style="margin-top:16px">
+      <div class="tile"><div class="t-lab">In</div><div class="t-val num pos">€1,112.00</div></div>
+      <div class="tile"><div class="t-lab">Out</div><div class="t-val num">€125.75</div></div>
+      <div class="tile"><div class="t-lab">Net</div><div class="t-val num pos">€986.25</div></div>
+    </div>
+
+    <h2 class="sec">Pace<span class="sec-rule"></span></h2>
+    <div class="pace">
+      <div class="pace-row">
+        <span class="pace-lab">Month gone</span>
+        <span class="bar"><i style="width:47%;background:var(--ink-3)"></i></span>
+        <span class="pace-val num">47%</span>
+      </div>
+      <div class="pace-row">
+        <span class="pace-lab">Plan used</span>
+        <span class="bar"><i style="width:35%;background:var(--ink)"></i></span>
+        <span class="pace-val num">35%</span>
+      </div>
+      <div class="pace-said okbox">
+        On pace for <b>€269.46</b> by September 30, against <b>€358.00</b> planned. That is <b>€88.54 under</b>.
+      </div>
+    </div>
+
+    <h2 class="sec">Where it goes<span class="sec-rule"></span></h2>
+    <div class="list">
+      <div class="item" style="flex-direction:column;align-items:stretch;gap:0;--accent-c:#C1642B">
+        <div class="row">
+          <span class="ico" style="--accent-c:#C1642B">SD</span>
+          <span class="grow">
+            <span class="item-title ellip">Sligo–Dublin</span>
+            <div class="item-sub">49% of everything · €104 planned</div>
+          </span>
+          <span class="item-amt num">€62.00</span>
+        </div>
+        <span class="bar"><i style="width:49%;background:var(--ink)"></i></span>
+      </div>
+      <div class="item" style="flex-direction:column;align-items:stretch;gap:0;--accent-c:#2C7A5B">
+        <div class="row">
+          <span class="ico" style="--accent-c:#2C7A5B">LC</span>
+          <span class="grow">
+            <span class="item-title ellip">Leap Card</span>
+            <div class="item-sub">26% of everything · €30 planned</div>
+          </span>
+          <span class="item-amt num neg">€33.00</span>
+        </div>
+        <span class="bar"><i style="width:26%;background:var(--neg)"></i></span>
+      </div>
+    </div>
+  </main>
+  <nav class="tabbar">
+      <button aria-selected="false"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"><path d="M3 10.2 12 3l9 7.2V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg><span>Home</span></button>
+      <button aria-selected="false"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"><rect x="3" y="6" width="18" height="13" rx="3"/><path d="M3 10h18M16 14.5h2"/></svg><span>Pockets</span></button>
+      <button class="fab" aria-label="Add"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
+      <button aria-selected="false"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="3"/><path d="M3 10h18M8 3v4M16 3v4"/></svg><span>Bills</span></button>
+      <button aria-selected="true"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M5 20V11M12 20V4M19 20v-6"/></svg><span>Stats</span></button>
+    </nav>
+</div>
+</x-dc>
+<script data-dc-script data-props='{"dark":{"editor":"boolean","default":false,"section":"Theme"},"$preview":{"width":390,"height":844}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return { themeClass: this.props.dark ? 'dk' : '' };
+  }
+}
+</script>
+</body>
+</html>

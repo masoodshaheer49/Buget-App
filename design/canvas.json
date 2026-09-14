@@ -5,8 +5,8 @@
     { "file": "Bills.dc.html",      "x": 940,  "y": 0,    "w": 390, "h": 844, "title": "Bills" },
     { "file": "Stats.dc.html",      "x": 1410, "y": 0,    "w": 390, "h": 844, "title": "Stats" },
     { "file": "SpendSheet.dc.html", "x": 1880, "y": 0,    "w": 390, "h": 844, "title": "Spend sheet" },
-    { "file": "DirectionA.dc.html", "x": 0,    "y": 1120, "w": 390, "h": 844, "title": "Direction A — Ledger" },
-    { "file": "DirectionB.dc.html", "x": 470,  "y": 1120, "w": 390, "h": 844, "title": "Direction B — One number" }
+    { "file": "DirectionA.dc.html", "x": 0,    "y": 1280, "w": 390, "h": 844, "title": "Direction A — Ledger" },
+    { "file": "DirectionB.dc.html", "x": 470,  "y": 1280, "w": 390, "h": 844, "title": "Direction B — One number" }
   ],
   "annotations": [
     {

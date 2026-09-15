@@ -21,10 +21,12 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.normpath(os.path.join(HERE, os.pardir))
 INDEX = os.path.join(ROOT, "index.html")
 
-# Archivo: a 19th-century American grotesque, carrying the language.
-# IBM Plex Mono: the ledger voice — every figure, label and date aligns.
+# Barlow: a low-contrast grotesque, carrying the language.
+# Newsreader: the serif every figure is set in — the voice of the thing.
+# IBM Plex Mono: labels and dates, spaced out like a docket header.
 CSS_URL = ("https://fonts.googleapis.com/css2"
-           "?family=Archivo:wght@400..700"
+           "?family=Barlow:wght@400;500;600"
+           "&family=Newsreader:wght@400;500"
            "&family=IBM+Plex+Mono:wght@400;500"
            "&display=swap")
 
@@ -32,7 +34,7 @@ CSS_URL = ("https://fonts.googleapis.com/css2"
 UA = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
 
-KEEP_SUBSETS = {"latin", "latin-ext"}
+KEEP_SUBSETS = {"latin"}
 
 START = "/* FONTS:START */"
 END = "/* FONTS:END */"
@@ -54,8 +56,8 @@ def main():
         raise SystemExit("could not parse the Google Fonts CSS")
 
     out = [START,
-           "/* Archivo + IBM Plex Mono, latin subsets, embedded so the app keeps",
-           "   its typography with no network. Regenerate: tools/embed_fonts.py */"]
+           "/* Barlow + Newsreader + IBM Plex Mono, latin subsets, embedded so the",
+           "   app keeps its typography with no network. Regenerate: tools/embed_fonts.py */"]
     kept = 0
     total = 0
     for subset, block in blocks:

@@ -55,7 +55,9 @@ There are only three things you can do:
                             └──── Cut ────►  a goal
 ```
 
-- **Money in** — it all lands in your balance. Nothing is split up for you.
+- **Money in** — it all lands in your balance. Nothing is split up for you. If
+  you borrowed it, say who from and the app raises that debt by the same amount,
+  because borrowing is two facts at once: you have the money, and you owe it.
 - **Record spending** — an amount and what it was for. Your balance drops.
 - **Cut money to a goal** — you decide this money is spoken for. It comes
   **straight out of what you have left**, because it is no longer yours to

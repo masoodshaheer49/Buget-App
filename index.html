@@ -104,14 +104,21 @@
 }
 
 *,*::before,*::after{box-sizing:border-box}
-html,body{height:100%}
+/* The shell is exactly one screen and never scrolls; only the docket inside
+   it does. Two heights fighting each other (100% against 100dvh) made the app
+   taller than the screen, which pushed the dock off the bottom with no way to
+   reach it — so there is one height here, and the page cannot scroll. */
+html{height:100%}
 body{
-  margin:0;background:var(--page);color:var(--ink);
+  margin:0;height:100vh;height:100dvh;overflow:hidden;
+  background:var(--shell);color:var(--ink);
   font-family:var(--sans);font-size:15px;line-height:1.45;
   -webkit-font-smoothing:antialiased;
   -webkit-tap-highlight-color:transparent;
-  overscroll-behavior-y:none;
+  overscroll-behavior:none;
 }
+/* The darker ground only shows where there is room for it to read as a page. */
+@media (min-width:470px){ body{background:var(--page)} }
 button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:pointer;-webkit-tap-highlight-color:transparent}
 input,select,textarea{font:inherit;color:inherit}
 :focus-visible{outline:2px solid var(--ink);outline-offset:2px}
@@ -132,7 +139,7 @@ input,select,textarea{font:inherit;color:inherit}
    ============================================================ */
 #app{
   max-width:430px;margin:0 auto;position:relative;
-  height:100%;min-height:100dvh;
+  height:100%;
   display:flex;flex-direction:column;
   background:var(--shell);overflow:hidden;
 }
@@ -456,7 +463,7 @@ const TABS = ["Home", "Goals", "Bills", "Spending"];
    never stored: derive() recomputes from the transaction log.
    ============================================================ */
 let state = null;
-let ui = { tab:"home", sheet:null, pad:"", label:"", other:"", goalIx:0, seeAll:false };
+let ui = { tab:"home", sheet:null, pad:"", label:"", other:"", borrow:"", goalIx:0, seeAll:false };
 let toastTimer = null;
 
 function uid(){ return Date.now().toString(36) + Math.random().toString(36).slice(2, 8); }
@@ -1477,7 +1484,7 @@ function closeSheet(silent){
   const b = document.getElementById("backdrop"), s = document.getElementById("sheet");
   if (b) b.remove();
   if (s) s.remove();
-  if (!silent) { ui.sheet = null; ui.pad = ""; ui.label = ""; ui.other = ""; }
+  if (!silent) { ui.sheet = null; ui.pad = ""; ui.label = ""; ui.other = ""; ui.borrow = ""; }
 }
 function sheetEl(){ return document.getElementById("sheet"); }
 function val(sel){ const el = sheetEl() && sheetEl().querySelector(sel); return el ? el.value : ""; }
@@ -1561,24 +1568,60 @@ function doSpend(){
 }
 
 /* ---- money in ---- */
+/**
+ * Money in, and — if any of it is borrowed — which debt it adds to. Borrowing
+ * is two facts at once: you have the money, and you owe it. Recording only the
+ * first is what makes a balance lie, so the sheet takes both in one go and
+ * raises that goal's target by the same amount.
+ */
 function sheetIncome(re){
   ui.sheet = "income";
   const amt = padValue();
+  const d = derive();
+  const debts = d.goals.filter(g => g.kind === "debt");
+  const from = debts.find(g => g.id === ui.borrow) || null;
+
+  let say;
+  if (from) {
+    say = "Lands in your balance, and what you owe " + from.name + " goes up to "
+        + fmt(round2(num(from.target) + amt)) + ".";
+  } else if (debts.length) {
+    say = "It all lands in your balance. Say who it came from if you have to give it back.";
+  } else {
+    say = "It all lands in your balance. Borrowing it? Make a goal under Goals → "
+        + "Money I owe first, and this will offer it here.";
+  }
+
   const body = `
     ${amountBlock()}
-    <div class="say">It all lands in your balance. Cut money to goals yourself, whenever you want.</div>
+    ${debts.length ? `
+    <div class="lab" style="padding:14px 0 9px;letter-spacing:.2em">Where it came from</div>
+    <div class="chips">
+      <button data-borrow="" aria-pressed="${!from}">Mine</button>
+      ${debts.map(g => `<button data-borrow="${esc(g.id)}" aria-pressed="${from && from.id === g.id}">Borrowed · ${esc(g.name)}</button>`).join("")}
+    </div>` : ""}
+    <div class="say">${esc(say)}</div>
     ${keypad()}
     <button class="pill ${amt > 0 ? "" : "dead"}" style="width:100%;margin-top:14px" data-do="income">${
-      amt > 0 ? "Add " + esc(fmt(amt)) + " to my balance" : "Enter an amount"}</button>`;
+      amt <= 0 ? "Enter an amount"
+      : from ? "Borrow " + esc(fmt(amt)) + " from " + esc(from.name)
+      : "Add " + esc(fmt(amt)) + " to my balance"}</button>`;
   if (re) sheetEl().querySelector(".sheet-body").innerHTML = body;
   else openSheet("Money in", body);
 }
 function doIncome(){
   const amt = padValue();
   if (amt <= 0) return toast("Enter an amount above zero");
-  addTx({ kind:"income", amount:amt, date:todayISO(), note:"Money in" });
+  const from = state.items.find(i => i.id === ui.borrow && i.type === "goal" && i.kind === "debt");
+  addTx({ kind:"income", amount:amt, date:todayISO(),
+          note: from ? "Borrowed from " + from.name : "Money in" });
+  if (from) {
+    from.target = round2(num(from.target) + amt);
+    from.updatedAt = Date.now();
+    save();
+  }
   closeSheet(); render();
-  toast("+" + fmt(amt));
+  toast(from ? "+" + fmt(amt) + " · you owe " + fmt(goalFigure(from, derive().held[from.id] || 0)) : "+" + fmt(amt));
 }
 
 /* ---- cut money to a goal ---- */
@@ -1988,6 +2031,8 @@ document.addEventListener("click", e => {
 
   const chip = hit("[data-chip]");
   if (chip) { ui.label = chip.dataset.chip; refreshSheet(); return; }
+  const borrow = hit("[data-borrow]");
+  if (borrow) { ui.borrow = borrow.dataset.borrow; refreshSheet(); return; }
   const sugg = hit("[data-sugg]");
   if (sugg) { ui.pad = String(num(sugg.dataset.sugg)); refreshSheet(); return; }
 
@@ -2058,7 +2103,7 @@ document.addEventListener("click", e => {
   if (!act) return;
   const A = {
     spend: () => { ui.pad = ""; ui.label = ""; ui.other = ""; sheetSpend(); },
-    income: () => { ui.pad = ""; sheetIncome(); },
+    income: () => { ui.pad = ""; ui.borrow = ""; sheetIncome(); },
     settings: sheetSettings,
     closesheet: () => closeSheet(),
     startfresh: startFresh,

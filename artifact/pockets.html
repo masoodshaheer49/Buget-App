@@ -169,11 +169,13 @@ input,select,textarea{font:inherit;color:inherit}
     var(--paper);
 }
 
-#dock{flex:none;padding:14px var(--pad) calc(env(safe-area-inset-bottom) + 16px)}
+/* The tabs sit right on the safe-area line. Padding above it only pushed the
+   whole bar up and left a band of dead ground under it. */
+#dock{flex:none;padding:12px var(--pad) calc(env(safe-area-inset-bottom) + 4px)}
 .dock-row{display:grid;grid-template-columns:1fr auto;gap:10px}
-.dock-tabs{display:grid;grid-template-columns:repeat(4,1fr);margin-top:10px}
+.dock-tabs{display:grid;grid-template-columns:repeat(4,1fr);margin-top:8px}
 .dock-tabs button{
-  text-align:center;padding:10px 0;
+  text-align:center;padding:9px 0 7px;
   font-family:var(--mono);font-weight:500;font-size:10px;
   letter-spacing:.14em;text-transform:uppercase;color:var(--ink-3);
   transition:color .14s ease;
@@ -1187,7 +1189,7 @@ function viewHome(d){
   let html = `
   <section style="padding:20px 0 0">
     <div class="lab">Money left · ${esc(new Date().toLocaleDateString(undefined, { weekday:"short", day:"numeric", month:"short" }))}</div>
-    <div class="fig" data-hero style="font-size:66px;font-weight:500;letter-spacing:-.03em;line-height:1;margin-top:8px;color:${over ? "var(--neg)" : "var(--ink)"}">${esc(f.sign + f.symbol + f.main)}<span style="font-size:.4em;color:${over ? "var(--neg-2)" : "var(--ink-3)"}">${esc(f.cents)}</span></div>
+    <div class="fig" data-hero data-act="count" style="cursor:pointer;font-size:66px;font-weight:500;letter-spacing:-.03em;line-height:1;margin-top:8px;color:${over ? "var(--neg)" : "var(--ink)"}">${esc(f.sign + f.symbol + f.main)}<span style="font-size:.4em;color:${over ? "var(--neg-2)" : "var(--ink-3)"}">${esc(f.cents)}</span></div>
     <div style="font-size:14px;color:var(--ink-2);margin-top:8px">${esc(line)}</div>`;
 
   /* Two different warnings. Being over is the loud one; a bill ahead that will
@@ -1240,7 +1242,7 @@ function viewHome(d){
   else html += latest.slice(0, 2).map(t => `
     <div class="lead">
       <span class="when" style="width:46px">${esc(relDay(t.date))}</span>
-      <span class="what">${esc(t.label || t.note || "Spending")}</span>
+      <span class="what">${esc(txName(t))}</span>
       <span class="dots"></span>
       <span class="amt">${esc(fmt(t.amount))}</span>
     </div>`).join("");
@@ -1274,6 +1276,13 @@ function viewHome(d){
     html += `<div style="height:18px"></div>`;
   }
   return html;
+}
+
+/** What a record is called in a list: what you wrote on it if you wrote
+    anything, else the label it was filed under. Three Takeaways in a row all
+    reading "Takeaway" is a list you cannot audit. */
+function txName(t){
+  return (t.note && t.note.trim()) || t.label || "Spending";
 }
 
 function byDateDesc(a, b){
@@ -1430,7 +1439,7 @@ function viewSpending(d){
   else html += shown.map(t => `
     <div class="lead" style="border-bottom:1px dashed var(--dash)">
       <span class="when" style="width:46px">${esc(relDay(t.date))}</span>
-      <span class="what">${esc(t.label || t.note || "Spending")}${t.auto ? " ·" : ""}</span>
+      <span class="what">${esc(txName(t))}${t.auto ? " ·" : ""}</span>
       <span class="dots"></span>
       <button class="undo" data-del-tx="${esc(t.id)}">Undo</button>
       <span class="amt">${esc(fmt(t.amount))}</span>
@@ -1517,7 +1526,7 @@ function amountBlock(){
     full app render behind it. */
 function refreshSheet(){
   if (!ui.sheet) return;
-  const map = { spend:sheetSpend, income:sheetIncome, cut:sheetCut, take:sheetTake };
+  const map = { spend:sheetSpend, income:sheetIncome, cut:sheetCut, take:sheetTake, count:sheetCount };
   const fn = map[ui.sheet];
   if (fn) fn(true);
 }
@@ -1809,6 +1818,59 @@ function deleteItem(id){
     });
 }
 
+/* ---- count what you actually have ----
+   The app is only ever as right as what you told it. This asks what is really
+   in your hand and your accounts, shows the gap, and writes the gap off in one
+   tap — so a missed coffee three weeks ago stops quietly poisoning the figure
+   you make decisions on. */
+function sheetCount(re){
+  ui.sheet = "count";
+  const d = derive();
+  const counted = padValue();
+  const typed = (ui.pad || "").length > 0;
+  const diff = round2(counted - d.left);
+  const off = Math.abs(diff) > 0.005;
+
+  let say;
+  if (!typed) {
+    say = "Add up your cash, your bank and anything on a travel card, and type the lot.";
+  } else if (!off) {
+    say = "Spot on. Nothing to change.";
+  } else if (diff < 0) {
+    say = "You have " + fmt(Math.abs(diff)) + " less than the app thought — something went out that never got recorded.";
+  } else {
+    say = "You have " + fmt(diff) + " more than the app thought — something came in that never got recorded.";
+  }
+
+  const body = `
+    <div class="setrow" style="padding-top:0">
+      <span style="flex:1"><b>The app says</b><span class="sub">Money left, right now</span></span>
+      <span class="fig" style="font-size:22px">${esc(fmt(d.left))}</span>
+    </div>
+    <div class="lab" style="padding:16px 0 9px;letter-spacing:.2em">What you actually have</div>
+    ${amountBlock()}
+    <div class="say ${typed && off ? "warn" : ""}">${esc(say)}</div>
+    ${keypad()}
+    <button class="pill ${typed && off ? "" : "dead"}" style="width:100%;margin-top:14px" data-do="count">${
+      !typed ? "Type what you counted"
+      : !off ? "Nothing to record"
+      : "Record the " + esc(fmt(Math.abs(diff))) + " difference"}</button>`;
+  if (re) sheetEl().querySelector(".sheet-body").innerHTML = body;
+  else openSheet("Count my money", body);
+}
+function doCount(){
+  const d = derive();
+  const counted = padValue();
+  if (!(ui.pad || "").length) return toast("Type what you counted");
+  const diff = round2(counted - d.left);
+  if (Math.abs(diff) <= 0.005) { closeSheet(); return toast("Already matches"); }
+  addTx(diff < 0
+    ? { kind:"expense", amount:Math.abs(diff), label:"Other", note:"Not recorded", date:todayISO() }
+    : { kind:"income", amount:diff, date:todayISO(), note:"Found when counting" });
+  closeSheet(); render();
+  toast("Now says " + fmt(counted));
+}
+
 /* ---- settings ---- */
 function sheetSettings(){
   const p = payPeriod();
@@ -1851,6 +1913,7 @@ function sheetSettings(){
       <span style="flex:1"><b>Sync across devices</b><span class="sub" data-sync-label>…</span></span>
       ${hostBridge ? `<button class="pill ghost sm" data-act="togglesync">${state.settings.sync === false ? "Turn on" : "Turn off"}</button>` : ""}
     </div>
+    <button class="setrow" data-act="count"><span style="flex:1"><b>Count my money</b><span class="sub">Check the app against what you really have</span></span></button>
     <button class="setrow" data-act="backup"><span style="flex:1"><b>Back up my budget</b><span class="sub">Saves everything as a file</span></span></button>
     <button class="setrow" data-act="restore"><span style="flex:1"><b>Restore from a backup</b><span class="sub">From a file or pasted text</span></span></button>
     <button class="setrow" data-act="erase"><span style="flex:1"><b style="color:var(--neg)">Erase everything</b><span class="sub">${syncEnabled() ? "Erases on every device" : "This device only"}</span></span></button>
@@ -1994,7 +2057,7 @@ function toggleBill(itemId, period){
     return;
   }
   addTx({ kind:"expense", amount:num(b.amount), label:b.name, itemId, billPeriod:period,
-          date: period.length === 10 && period <= todayISO() ? period : todayISO(), note:"Bill paid" });
+          date: period.length === 10 && period <= todayISO() ? period : todayISO() });
   render();
   toast("−" + fmt(b.amount) + " · " + b.name);
 }
@@ -2074,7 +2137,7 @@ document.addEventListener("click", e => {
   const doer = hit("[data-do]");
   if (doer) {
     const map = {
-      spend:doSpend, income:doIncome, cut:doCut, take:doTake,
+      spend:doSpend, income:doIncome, cut:doCut, take:doTake, count:doCount,
       savesettings:doSaveSettings, copybackup:doCopyBackup, "paste-restore":doPasteRestore
     };
     if (doer.dataset.do === "saveitem") return doSaveItem(doer.dataset.id || null, doer.dataset.type);
@@ -2088,6 +2151,7 @@ document.addEventListener("click", e => {
   const A = {
     spend: () => { ui.pad = ""; ui.label = ""; ui.other = ""; sheetSpend(); },
     income: () => { ui.pad = ""; ui.borrow = ""; sheetIncome(); },
+    count: () => { ui.pad = ""; sheetCount(); },
     settings: sheetSettings,
     closesheet: () => closeSheet(),
     startfresh: startFresh,

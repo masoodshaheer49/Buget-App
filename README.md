@@ -92,12 +92,24 @@ a 28-day prepay plan is not monthly. It drifts earlier through the year and
 bills thirteen times, not twelve, so a day-of-the-month field quietly
 under-budgets it.
 
+### Where money comes from
+
+Money in is tagged too — **Wages**, **Tips**, or whatever you set in Settings —
+and Spending totals each source on its own. Tips are not wages: one is the plan
+and the other is what the week happened to give you, and a figure that blurs the
+two tells you nothing about either.
+
+Money you borrowed is tagged by the goal it belongs to instead, so a loan can
+never be mistaken for earnings.
+
 ### Spending
 
 Every spend carries a **label**, not a pocket — Coffee, Groceries, Transport,
 whatever you set in Settings, plus *Other* for anything else. The Spending tab
-totals the month, ranks where it went by label, and lists every record newest
-first with an **Undo** beside each.
+totals the month, ranks where it went by label, totals what came in by source,
+and lists **every** record — in and out — newest first with an **Undo** beside
+each. Money in is shown in green with a `+`, because an entry you cannot see is
+an entry you cannot correct.
 
 ### Payday, or not
 

@@ -7,7 +7,7 @@
  * Note that this only caches the app shell. Your budget data never touches
  * the cache or the network — it lives in localStorage on the device.
  */
-const VERSION = "pockets-v4";
+const VERSION = "pockets-v5";
 const SHELL = [
   "./",
   "./index.html",

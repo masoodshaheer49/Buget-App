@@ -437,6 +437,9 @@ const CURRENCIES = [
 ];
 
 const DEFAULT_LABELS = ["Coffee", "Groceries", "Transport", "Takeaway", "Bills"];
+/* Where money comes from. Wages and tips are different animals: one is
+   the plan, the other is what the week happened to give you. */
+const DEFAULT_INCOME = ["Wages", "Tips"];
 const OTHER = "Other";
 
 const TABS = ["Home", "Goals", "Bills", "Spending"];
@@ -449,7 +452,7 @@ const TABS = ["Home", "Goals", "Bills", "Spending"];
    never stored: derive() recomputes from the transaction log.
    ============================================================ */
 let state = null;
-let ui = { tab:"home", sheet:null, pad:"", label:"", other:"", borrow:"", goalIx:0, seeAll:false };
+let ui = { tab:"home", sheet:null, pad:"", label:"", other:"", borrow:"", src:"", goalIx:0, seeAll:false };
 let toastTimer = null;
 
 function uid(){ return Date.now().toString(36) + Math.random().toString(36).slice(2, 8); }
@@ -461,6 +464,7 @@ function defaultState(){
     settings: {
       currency:"EUR", theme:"auto", name:"", demo:false, sync:true,
       labels: DEFAULT_LABELS.slice(),
+      income: DEFAULT_INCOME.slice(),
       payday:null,          // "YYYY-MM-DD" of the next pay, or null
       payEvery:30,          // days between pays
       updatedAt: now
@@ -560,6 +564,9 @@ function migrate(data){
   s.settings.labels = Array.isArray(s.settings.labels) && s.settings.labels.length
     ? s.settings.labels.map(String).filter(l => l && l !== OTHER).slice(0, 12)
     : DEFAULT_LABELS.slice();
+  s.settings.income = Array.isArray(s.settings.income) && s.settings.income.length
+    ? s.settings.income.map(String).filter(Boolean).slice(0, 8)
+    : DEFAULT_INCOME.slice();
   s.tombstones = tsMap(data.tombstones);
   s.itemTombstones = tsMap(data.itemTombstones || data.catTombstones);
 
@@ -813,6 +820,23 @@ function spentIn(mk){
   for (const t of state.tx) if (t.kind === "expense" && monthOfISO(t.date) === mk) total += num(t.amount);
   return round2(total);
 }
+/** This month's money in, grouped by where it came from. Borrowed money is
+    grouped under the goal it belongs to, so a wage and a loan never blur. */
+function incomeBy(mk){
+  const g = {};
+  state.tx.forEach(t => {
+    if (t.kind !== "income" || monthOfISO(t.date) !== mk) return;
+    const name = (t.label || "").trim()
+      || (t.note && /^Borrowed from /.test(t.note) ? t.note.replace(/^Borrowed from /, "Borrowed · ") : "")
+      || "Money in";
+    const k = name.toLowerCase();
+    if (!g[k]) g[k] = { label:name, total:0, count:0 };
+    g[k].total = round2(g[k].total + num(t.amount));
+    g[k].count++;
+  });
+  return g;
+}
+
 function incomeSince(iso){
   let total = 0;
   for (const t of state.tx) if (t.kind === "income" && t.date >= iso) total += num(t.amount);
@@ -1282,7 +1306,7 @@ function viewHome(d){
     anything, else the label it was filed under. Three Takeaways in a row all
     reading "Takeaway" is a list you cannot audit. */
 function txName(t){
-  return (t.note && t.note.trim()) || t.label || "Spending";
+  return (t.note && t.note.trim()) || t.label || (t.kind === "income" ? "Money in" : "Spending");
 }
 
 function byDateDesc(a, b){
@@ -1396,14 +1420,17 @@ function viewBills(d){
 function viewSpending(d){
   const mk = thisMonth();
   const spent = spentIn(mk);
-  const all = state.tx.filter(t => t.kind === "expense").sort(byDateDesc);
+  const out = state.tx.filter(t => t.kind === "expense");
+  /* Money in belongs in the list too: it is the only place an entry can be
+     looked at, and a mistyped tip has to be undoable somewhere. */
+  const all = state.tx.filter(t => t.kind === "expense" || t.kind === "income").sort(byDateDesc);
   const shown = ui.seeAll ? all : all.slice(0, 40);
   const burn = burnRate();
 
   let html = `<div style="padding:20px 0 20px">
     <div class="lab">Spent in ${esc(monthLabel(mk, true).split(" ")[0])}</div>
     <div class="fig" style="font-size:52px;font-weight:500;letter-spacing:-.03em;line-height:1;margin-top:8px">${esc(fmt(spent))}</div>
-    <div style="font-size:14px;color:var(--ink-2);margin-top:8px">${all.length} record${all.length === 1 ? "" : "s"} · ${esc(fmt(burn.perDay))} a day so far</div>`;
+    <div style="font-size:14px;color:var(--ink-2);margin-top:8px">${out.length} record${out.length === 1 ? "" : "s"} · ${esc(fmt(burn.perDay))} a day so far</div>`;
 
   /* Where it goes, by label */
   const groups = {};
@@ -1433,6 +1460,24 @@ function viewSpending(d){
     html += `</div>`;
   }
 
+  /* What came in, and from where */
+  const inGroups = incomeBy(mk);
+  const inRanked = Object.keys(inGroups).map(k => inGroups[k]).sort((a, b) => b.total - a.total);
+  const inTotal = round2(inRanked.reduce((a, g) => a + g.total, 0));
+  if (inRanked.length) {
+    html += `<div style="margin-top:18px"><div class="sec">
+      <span class="lab">Money in</span>
+      <span class="fig" style="font-size:17px">${esc(fmt(inTotal))}</span></div>`;
+    html += inRanked.map(g => `
+      <div class="lead" style="border-bottom:1px dashed var(--dash)">
+        <span class="what">${esc(g.label)}</span>
+        <span class="dots"></span>
+        <span class="lab-s" style="letter-spacing:.1em">${g.count}&times;</span>
+        <span class="amt pos" style="color:var(--pos)">${esc(fmt(g.total))}</span>
+      </div>`).join("");
+    html += `</div>`;
+  }
+
   html += `<div style="margin-top:18px">
     <div class="sec"><span class="lab">Newest first</span>${!ui.seeAll && all.length > 40 ? `<button class="more" data-act="seeall">Show all ${all.length}</button>` : ""}</div>`;
   if (!shown.length) html += `<div class="empty">Nothing recorded yet.</div>`;
@@ -1442,7 +1487,7 @@ function viewSpending(d){
       <span class="what">${esc(txName(t))}${t.auto ? " ·" : ""}</span>
       <span class="dots"></span>
       <button class="undo" data-del-tx="${esc(t.id)}">Undo</button>
-      <span class="amt">${esc(fmt(t.amount))}</span>
+      <span class="amt"${t.kind === "income" ? ' style="color:var(--pos)"' : ""}>${t.kind === "income" ? "+" : ""}${esc(fmt(t.amount))}</span>
     </div>`).join("");
   html += `</div></div>`;
   return html;
@@ -1477,7 +1522,7 @@ function closeSheet(silent){
   const b = document.getElementById("backdrop"), s = document.getElementById("sheet");
   if (b) b.remove();
   if (s) s.remove();
-  if (!silent) { ui.sheet = null; ui.pad = ""; ui.label = ""; ui.other = ""; ui.borrow = ""; }
+  if (!silent) { ui.sheet = null; ui.pad = ""; ui.label = ""; ui.other = ""; ui.borrow = ""; ui.src = ""; }
 }
 function sheetEl(){ return document.getElementById("sheet"); }
 function val(sel){ const el = sheetEl() && sheetEl().querySelector(sel); return el ? el.value : ""; }
@@ -1578,26 +1623,33 @@ function sheetIncome(re){
   if (from) {
     say = "Lands in your balance, and what you owe " + from.name + " goes up to "
         + fmt(round2(num(from.target) + amt)) + ".";
+  } else if (ui.src) {
+    const sofar = incomeBy(thisMonth())[ui.src.toLowerCase()];
+    say = "Counted as " + ui.src + ". "
+        + (sofar ? ui.src + " so far this month: " + fmt(sofar.total) + " over " + sofar.count + " time" + (sofar.count === 1 ? "" : "s") + "."
+                 : "Spending will show what " + ui.src + " adds up to.");
   } else if (debts.length) {
-    say = "It all lands in your balance. Say who it came from if you have to give it back.";
+    say = "It all lands in your balance. Say where it came from and it gets totalled separately.";
   } else {
     say = "It all lands in your balance. Borrowing it? Make a goal under Goals → "
-        + "Money I owe first, and this will offer it here.";
+        + "Money I owe and it will be offered here.";
   }
 
+  const srcs = state.settings.income;
   const body = `
     ${amountBlock()}
-    ${debts.length ? `
     <div class="lab" style="padding:14px 0 9px;letter-spacing:.2em">Where it came from</div>
     <div class="chips">
-      <button data-borrow="" aria-pressed="${!from}">Mine</button>
+      ${srcs.map(s => `<button data-src="${esc(s)}" aria-pressed="${!from && ui.src === s}">${esc(s)}</button>`).join("")}
+      <button data-src="" aria-pressed="${!from && !ui.src}">Something else</button>
       ${debts.map(g => `<button data-borrow="${esc(g.id)}" aria-pressed="${from && from.id === g.id}">Borrowed · ${esc(g.name)}</button>`).join("")}
-    </div>` : ""}
+    </div>
     <div class="say">${esc(say)}</div>
     ${keypad()}
     <button class="pill ${amt > 0 ? "" : "dead"}" style="width:100%;margin-top:14px" data-do="income">${
       amt <= 0 ? "Enter an amount"
       : from ? "Borrow " + esc(fmt(amt)) + " from " + esc(from.name)
+      : ui.src ? "Add " + esc(fmt(amt)) + " · " + esc(ui.src)
       : "Add " + esc(fmt(amt)) + " to my balance"}</button>`;
   if (re) sheetEl().querySelector(".sheet-body").innerHTML = body;
   else openSheet("Money in", body);
@@ -1607,14 +1659,16 @@ function doIncome(){
   if (amt <= 0) return toast("Enter an amount above zero");
   const from = state.items.find(i => i.id === ui.borrow && i.type === "goal" && i.kind === "debt");
   addTx({ kind:"income", amount:amt, date:todayISO(),
-          note: from ? "Borrowed from " + from.name : "Money in" });
+          label: from ? "" : (ui.src || ""),
+          note: from ? "Borrowed from " + from.name : "" });
   if (from) {
     from.target = round2(num(from.target) + amt);
     from.updatedAt = Date.now();
     save();
   }
   closeSheet(); render();
-  toast(from ? "+" + fmt(amt) + " · you owe " + fmt(goalFigure(from, derive().held[from.id] || 0)) : "+" + fmt(amt));
+  toast(from ? "+" + fmt(amt) + " · you owe " + fmt(goalFigure(from, derive().held[from.id] || 0))
+             : "+" + fmt(amt) + (ui.src ? " · " + ui.src : ""));
 }
 
 /* ---- cut money to a goal ---- */
@@ -1897,6 +1951,10 @@ function sheetSettings(){
       <input class="input" id="f-labels" value="${esc(state.settings.labels.join(", "))}" placeholder="Coffee, Groceries, Transport">
       <div class="say">Separated by commas. “Other” is always offered.</div></div>
 
+    <div class="field"><label class="lab">Where money comes from</label>
+      <input class="input" id="f-income" value="${esc(state.settings.income.join(", "))}" placeholder="Wages, Tips">
+      <div class="say">Tag money in and Spending totals each one on its own.</div></div>
+
     <button class="pill" style="width:100%;margin-top:18px" data-do="savesettings">Save</button>
 
     <div class="lab" style="margin-top:26px;padding-bottom:9px;border-bottom:1px dashed var(--dash)">Repeating charges</div>
@@ -1931,6 +1989,10 @@ function doSaveSettings(){
   s.labels = (val("#f-labels") || "").split(",").map(x => x.trim())
     .filter(x => x && x !== OTHER && !seen[x.toLowerCase()] && (seen[x.toLowerCase()] = true)).slice(0, 12);
   if (!s.labels.length) s.labels = DEFAULT_LABELS.slice();
+  const seenIn = {};
+  s.income = (val("#f-income") || "").split(",").map(x => x.trim())
+    .filter(x => x && !seenIn[x.toLowerCase()] && (seenIn[x.toLowerCase()] = true)).slice(0, 8);
+  if (!s.income.length) s.income = DEFAULT_INCOME.slice();
   s.updatedAt = Date.now();
   save(); closeSheet(); render(); toast("Saved");
 }
@@ -2078,8 +2140,10 @@ document.addEventListener("click", e => {
 
   const chip = hit("[data-chip]");
   if (chip) { ui.label = chip.dataset.chip; refreshSheet(); return; }
+  const src = hit("[data-src]");
+  if (src) { ui.src = src.dataset.src; ui.borrow = ""; refreshSheet(); return; }
   const borrow = hit("[data-borrow]");
-  if (borrow) { ui.borrow = borrow.dataset.borrow; refreshSheet(); return; }
+  if (borrow) { ui.borrow = borrow.dataset.borrow; ui.src = ""; refreshSheet(); return; }
   const sugg = hit("[data-sugg]");
   if (sugg) { ui.pad = String(num(sugg.dataset.sugg)); refreshSheet(); return; }
 
@@ -2150,7 +2214,7 @@ document.addEventListener("click", e => {
   if (!act) return;
   const A = {
     spend: () => { ui.pad = ""; ui.label = ""; ui.other = ""; sheetSpend(); },
-    income: () => { ui.pad = ""; ui.borrow = ""; sheetIncome(); },
+    income: () => { ui.pad = ""; ui.borrow = ""; ui.src = ""; sheetIncome(); },
     count: () => { ui.pad = ""; sheetCount(); },
     settings: sheetSettings,
     closesheet: () => closeSheet(),

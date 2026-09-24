@@ -1923,17 +1923,35 @@ function doSaveItem(id, type){
   toast(name + " saved");
 }
 
+/**
+ * Deleting a goal has to answer one question: is the money in it still yours?
+ *
+ * For a savings goal it is — it goes back to your balance. For a debt goal it
+ * is not: what it holds is what you already handed over, so giving it back
+ * would invent money you no longer have. Those repayments become records of
+ * money spent instead, which is what they were, and your balance does not move.
+ */
 function deleteItem(id){
   const it = state.items.find(i => i.id === id);
   if (!it) return;
   const d = derive();
-  const saved = d.held[id] || 0;
+  const saved = round2(d.held[id] || 0);
+  const repaid = it.type === "goal" && it.kind === "debt" && saved > 0.005;
+  const kindWord = it.type === "bill" ? "bill" : it.type === "repeat" ? "repeating charge" : "goal";
+
   confirmSheet("Delete " + it.name + "?",
-    saved > 0.005
-      ? "It holds " + fmt(saved) + ". That goes back into your balance. Spending you recorded stays."
-      : "Spending you recorded stays. This only removes the " + (it.type === "bill" ? "bill" : it.type === "repeat" ? "repeating charge" : "goal") + ".",
+    repaid
+      ? "You have paid " + fmt(saved) + " of this. That money is gone, so it stays gone — it goes into your records as money spent, and your balance does not change."
+      : saved > 0.005
+        ? "It holds " + fmt(saved) + ". That goes back into your balance. Spending you recorded stays."
+        : "Spending you recorded stays. This only removes the " + kindWord + ".",
     "Delete", () => {
-      if (saved > 0.005) addTx({ kind:"allocate", amount:-saved, itemId:id, date:todayISO(), note:"Returned from " + it.name });
+      if (repaid) {
+        addTx({ kind:"expense", amount:saved, label:it.name, date:todayISO(), note:"Paid " + it.name });
+        addTx({ kind:"allocate", amount:-saved, itemId:id, date:todayISO(), note:"Settled " + it.name });
+      } else if (saved > 0.005) {
+        addTx({ kind:"allocate", amount:-saved, itemId:id, date:todayISO(), note:"Returned from " + it.name });
+      }
       state.items = state.items.filter(i => i.id !== id);
       state.itemTombstones[id] = Date.now();
       save(); render(); toast(it.name + " deleted");

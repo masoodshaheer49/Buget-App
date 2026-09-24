@@ -101,6 +101,11 @@ the two tells you nothing about either. Tips land daily, so each day is its own
 entry, and while you are typing the amount the sheet says what tips have come to
 this month.
 
+Both recording sheets carry a **When** row — Today, Yesterday, or a picker —
+because money rarely lands on the day you get round to typing it. Tips come the
+next morning; a receipt surfaces in a pocket a week later. The date cannot be in
+the future, and it goes back to Today for the next entry rather than sticking.
+
 Edit the sources in Settings. Money you borrowed is tagged by the goal it
 belongs to instead, so a loan can never be mistaken for earnings.
 

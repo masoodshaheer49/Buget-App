@@ -454,7 +454,8 @@ const TABS = ["Home", "Goals", "Bills", "Spending"];
    never stored: derive() recomputes from the transaction log.
    ============================================================ */
 let state = null;
-let ui = { tab:"home", sheet:null, pad:"", label:"", other:"", borrow:"", src:"", goalIx:0, seeAll:false };
+let ui = { tab:"home", sheet:null, pad:"", label:"", other:"", borrow:"", src:"",
+           date:"", pick:false, goalIx:0, seeAll:false };
 let toastTimer = null;
 
 function uid(){ return Date.now().toString(36) + Math.random().toString(36).slice(2, 8); }
@@ -1524,7 +1525,7 @@ function closeSheet(silent){
   const b = document.getElementById("backdrop"), s = document.getElementById("sheet");
   if (b) b.remove();
   if (s) s.remove();
-  if (!silent) { ui.sheet = null; ui.pad = ""; ui.label = ""; ui.other = ""; ui.borrow = ""; ui.src = ""; }
+  if (!silent) { ui.sheet = null; ui.pad = ""; ui.label = ""; ui.other = ""; ui.borrow = ""; ui.src = ""; ui.date = todayISO(); ui.pick = false; }
 }
 function sheetEl(){ return document.getElementById("sheet"); }
 function val(sel){ const el = sheetEl() && sheetEl().querySelector(sel); return el ? el.value : ""; }
@@ -1562,6 +1563,11 @@ function padPress(k){
   refreshSheet();
 }
 function padValue(){ return parseAmount(ui.pad); }
+/** The day being recorded — never the future, and never blank. */
+function recordDate(){
+  const d = ui.date || todayISO();
+  return /^\d{4}-\d{2}-\d{2}$/.test(d) && d <= todayISO() ? d : todayISO();
+}
 function amountBlock(){
   const c = currencyMeta();
   return `<div class="amount">
@@ -1588,6 +1594,22 @@ function refreshSheet(){
   try { back.setSelectionRange(at, at); } catch (e) {}
 }
 
+/* Money does not always land on the day you record it: tips come the next
+   morning, a receipt surfaces in a pocket a week later. Today and Yesterday
+   cover almost every case in one tap; the third chip opens a real picker and
+   then wears the date it chose. */
+function dateRow(){
+  const today = todayISO(), yest = isoBack(1), cur = recordDate();
+  return `
+    <div class="lab" style="padding:14px 0 9px;letter-spacing:.2em">When</div>
+    <div class="chips">
+      <button data-when="${today}" aria-pressed="${!ui.pick && cur === today}">Today</button>
+      <button data-when="${yest}" aria-pressed="${!ui.pick && cur === yest}">Yesterday</button>
+      <button data-when="pick" aria-pressed="${!!ui.pick}">${esc(ui.pick && cur !== today ? relDay(cur) : "Pick a date")}</button>
+    </div>
+    ${ui.pick ? `<div class="field"><input class="input" type="date" id="f-when" value="${esc(cur)}" max="${today}"></div>` : ""}`;
+}
+
 /* ---- record spending ---- */
 function sheetSpend(re){
   ui.sheet = "spend";
@@ -1601,6 +1623,7 @@ function sheetSpend(re){
     <div class="chips">${labels.map(l =>
       `<button data-chip="${esc(l)}" aria-pressed="${ui.label === l}">${esc(l)}</button>`).join("")}</div>
     ${ui.label === OTHER ? `<div class="field"><input class="input" id="f-other" value="${esc(ui.other)}" placeholder="Type what it was for"></div>` : ""}
+    ${dateRow()}
     ${keypad()}
     <button class="pill ${can ? "" : "dead"}" style="width:100%;margin-top:14px" data-do="spend">${
       !amt ? "Enter an amount" : (!named ? "Pick what it was for" : "Record " + esc(fmt(amt)) + " · " + esc(named))}</button>`;
@@ -1612,7 +1635,7 @@ function doSpend(){
   const named = ui.label === OTHER ? (val("#f-other") || ui.other || "").trim() : ui.label;
   if (amt <= 0) return toast("Enter an amount above zero");
   if (!named) return toast("Pick what it was for");
-  addTx({ kind:"expense", amount:amt, label:named, date:todayISO() });
+  addTx({ kind:"expense", amount:amt, label:named, date:recordDate() });
   closeSheet(); render();
   toast("−" + fmt(amt) + " · " + named);
 }
@@ -1663,6 +1686,7 @@ function sheetIncome(re){
       ${debts.map(g => `<button data-borrow="${esc(g.id)}" aria-pressed="${from && from.id === g.id}">Borrowed · ${esc(g.name)}</button>`).join("")}
     </div>
     ${who ? `<div class="field"><input class="input" id="f-other" value="${esc(ui.other)}" placeholder="Who gave it to you?"></div>` : ""}
+    ${dateRow()}
     <div class="say">${esc(say)}</div>
     ${keypad()}
     <button class="pill ${can ? "" : "dead"}" style="width:100%;margin-top:14px" data-do="income">${
@@ -1680,7 +1704,7 @@ function doIncome(){
   const from = state.items.find(i => i.id === ui.borrow && i.type === "goal" && i.kind === "debt");
   const named = ui.src === WHO ? (val("#f-other") || ui.other || "").trim() : ui.src;
   if (!from && !named) return toast(ui.src === WHO ? "Say who it was from" : "Pick where it came from");
-  addTx({ kind:"income", amount:amt, date:todayISO(),
+  addTx({ kind:"income", amount:amt, date:recordDate(),
           label: from ? "" : named,
           note: from ? "Borrowed from " + from.name : "" });
   if (from) {
@@ -2162,6 +2186,12 @@ document.addEventListener("click", e => {
 
   const chip = hit("[data-chip]");
   if (chip) { ui.label = chip.dataset.chip; refreshSheet(); return; }
+  const when = hit("[data-when]");
+  if (when) {
+    if (when.dataset.when === "pick") ui.pick = true;
+    else { ui.pick = false; ui.date = when.dataset.when; }
+    refreshSheet(); return;
+  }
   const src = hit("[data-src]");
   if (src) { ui.src = src.dataset.src; ui.borrow = ""; refreshSheet(); return; }
   const borrow = hit("[data-borrow]");
@@ -2235,8 +2265,8 @@ document.addEventListener("click", e => {
   const act = hit("[data-act]");
   if (!act) return;
   const A = {
-    spend: () => { ui.pad = ""; ui.label = ""; ui.other = ""; sheetSpend(); },
-    income: () => { ui.pad = ""; ui.borrow = ""; ui.src = ""; sheetIncome(); },
+    spend: () => { ui.pad = ""; ui.label = ""; ui.other = ""; ui.date = todayISO(); ui.pick = false; sheetSpend(); },
+    income: () => { ui.pad = ""; ui.borrow = ""; ui.src = ""; ui.date = todayISO(); ui.pick = false; sheetIncome(); },
     count: () => { ui.pad = ""; sheetCount(); },
     settings: sheetSettings,
     closesheet: () => closeSheet(),
@@ -2254,6 +2284,10 @@ document.addEventListener("click", e => {
 /* The one free-text field either sheet has. Keeping the button in step as it
    is typed is the difference between "Say who it was from" and "Add €20 · Dad". */
 document.addEventListener("input", e => {
+  if (e.target.id === "f-when") {
+    if (/^\d{4}-\d{2}-\d{2}$/.test(e.target.value) && e.target.value <= todayISO()) ui.date = e.target.value;
+    return refreshSheet();
+  }
   if (e.target.id !== "f-other") return;
   ui.other = e.target.value;
   refreshSheet();
@@ -2279,6 +2313,7 @@ function runHash(){
   });
   history.replaceState(null, "", location.pathname + location.search);   // never fire twice
 
+  ui.date = todayISO(); ui.pick = false;
   const amount = q.amount ? parseAmount(q.amount) : 0;
   if (q.spend !== undefined) {
     const label = typeof q.spend === "string" ? q.spend : "";

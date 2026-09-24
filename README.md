@@ -94,13 +94,15 @@ under-budgets it.
 
 ### Where money comes from
 
-Money in is tagged too — **Wages**, **Tips**, or whatever you set in Settings —
-and Spending totals each source on its own. Tips are not wages: one is the plan
-and the other is what the week happened to give you, and a figure that blurs the
-two tells you nothing about either.
+Money in takes a source the same way a spend takes a label: **Tips**, **Salary**,
+or **From someone** — where you type who it was. Tips are not salary: one is the
+plan, the other is what the day happened to give you, and a figure that blurs
+the two tells you nothing about either. Tips land daily, so each day is its own
+entry, and while you are typing the amount the sheet says what tips have come to
+this month.
 
-Money you borrowed is tagged by the goal it belongs to instead, so a loan can
-never be mistaken for earnings.
+Edit the sources in Settings. Money you borrowed is tagged by the goal it
+belongs to instead, so a loan can never be mistaken for earnings.
 
 ### Spending
 

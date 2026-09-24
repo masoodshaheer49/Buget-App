@@ -437,9 +437,11 @@ const CURRENCIES = [
 ];
 
 const DEFAULT_LABELS = ["Coffee", "Groceries", "Transport", "Takeaway", "Bills"];
-/* Where money comes from. Wages and tips are different animals: one is
-   the plan, the other is what the week happened to give you. */
-const DEFAULT_INCOME = ["Wages", "Tips"];
+/* Where money comes from. Tips and salary are different animals: one is
+   the plan, the other is what the day happened to give you.
+   WHO is the sentinel for "someone gave it to me" — the name is typed. */
+const WHO = "~who";
+const DEFAULT_INCOME = ["Tips", "Salary"];
 const OTHER = "Other";
 
 const TABS = ["Home", "Goals", "Bills", "Spending"];
@@ -1573,7 +1575,17 @@ function refreshSheet(){
   if (!ui.sheet) return;
   const map = { spend:sheetSpend, income:sheetIncome, cut:sheetCut, take:sheetTake, count:sheetCount };
   const fn = map[ui.sheet];
-  if (fn) fn(true);
+  if (!fn) return;
+  /* Re-rendering under a typing finger would drop the caret and close the
+     keyboard, so put both back exactly where they were. */
+  const live = sheetEl() && sheetEl().querySelector("input:focus, textarea:focus");
+  const id = live && live.id, at = live ? live.selectionStart : null;
+  fn(true);
+  if (!id) return;
+  const back = sheetEl() && sheetEl().querySelector("#" + id);
+  if (!back) return;
+  back.focus();
+  try { back.setSelectionRange(at, at); } catch (e) {}
 }
 
 /* ---- record spending ---- */
@@ -1619,15 +1631,20 @@ function sheetIncome(re){
   const debts = d.goals.filter(g => g.kind === "debt");
   const from = debts.find(g => g.id === ui.borrow) || null;
 
+  const who = ui.src === WHO;
+  const named = who ? (ui.other || "").trim() : ui.src;
+
   let say;
   if (from) {
     say = "Lands in your balance, and what you owe " + from.name + " goes up to "
         + fmt(round2(num(from.target) + amt)) + ".";
-  } else if (ui.src) {
-    const sofar = incomeBy(thisMonth())[ui.src.toLowerCase()];
-    say = "Counted as " + ui.src + ". "
-        + (sofar ? ui.src + " so far this month: " + fmt(sofar.total) + " over " + sofar.count + " time" + (sofar.count === 1 ? "" : "s") + "."
-                 : "Spending will show what " + ui.src + " adds up to.");
+  } else if (named) {
+    const sofar = incomeBy(thisMonth())[named.toLowerCase()];
+    say = sofar
+      ? named + " so far this month: " + fmt(sofar.total) + " over " + sofar.count + " time" + (sofar.count === 1 ? "" : "s") + "."
+      : "Counted as " + named + ", and totalled on its own.";
+  } else if (who) {
+    say = "Type who it came from.";
   } else if (debts.length) {
     say = "It all lands in your balance. Say where it came from and it gets totalled separately.";
   } else {
@@ -1635,22 +1652,25 @@ function sheetIncome(re){
         + "Money I owe and it will be offered here.";
   }
 
-  const srcs = state.settings.income;
+  const can = amt > 0 && (!!from || !!named);
   const body = `
     ${amountBlock()}
     <div class="lab" style="padding:14px 0 9px;letter-spacing:.2em">Where it came from</div>
     <div class="chips">
-      ${srcs.map(s => `<button data-src="${esc(s)}" aria-pressed="${!from && ui.src === s}">${esc(s)}</button>`).join("")}
-      <button data-src="" aria-pressed="${!from && !ui.src}">Something else</button>
+      ${state.settings.income.map(s =>
+        `<button data-src="${esc(s)}" aria-pressed="${!from && ui.src === s}">${esc(s)}</button>`).join("")}
+      <button data-src="${WHO}" aria-pressed="${who}">From someone</button>
       ${debts.map(g => `<button data-borrow="${esc(g.id)}" aria-pressed="${from && from.id === g.id}">Borrowed · ${esc(g.name)}</button>`).join("")}
     </div>
+    ${who ? `<div class="field"><input class="input" id="f-other" value="${esc(ui.other)}" placeholder="Who gave it to you?"></div>` : ""}
     <div class="say">${esc(say)}</div>
     ${keypad()}
-    <button class="pill ${amt > 0 ? "" : "dead"}" style="width:100%;margin-top:14px" data-do="income">${
+    <button class="pill ${can ? "" : "dead"}" style="width:100%;margin-top:14px" data-do="income">${
       amt <= 0 ? "Enter an amount"
       : from ? "Borrow " + esc(fmt(amt)) + " from " + esc(from.name)
-      : ui.src ? "Add " + esc(fmt(amt)) + " · " + esc(ui.src)
-      : "Add " + esc(fmt(amt)) + " to my balance"}</button>`;
+      : named ? "Add " + esc(fmt(amt)) + " · " + esc(named)
+      : who ? "Say who it was from"
+      : "Pick where it came from"}</button>`;
   if (re) sheetEl().querySelector(".sheet-body").innerHTML = body;
   else openSheet("Money in", body);
 }
@@ -1658,8 +1678,10 @@ function doIncome(){
   const amt = padValue();
   if (amt <= 0) return toast("Enter an amount above zero");
   const from = state.items.find(i => i.id === ui.borrow && i.type === "goal" && i.kind === "debt");
+  const named = ui.src === WHO ? (val("#f-other") || ui.other || "").trim() : ui.src;
+  if (!from && !named) return toast(ui.src === WHO ? "Say who it was from" : "Pick where it came from");
   addTx({ kind:"income", amount:amt, date:todayISO(),
-          label: from ? "" : (ui.src || ""),
+          label: from ? "" : named,
           note: from ? "Borrowed from " + from.name : "" });
   if (from) {
     from.target = round2(num(from.target) + amt);
@@ -1668,7 +1690,7 @@ function doIncome(){
   }
   closeSheet(); render();
   toast(from ? "+" + fmt(amt) + " · you owe " + fmt(goalFigure(from, derive().held[from.id] || 0))
-             : "+" + fmt(amt) + (ui.src ? " · " + ui.src : ""));
+             : "+" + fmt(amt) + (named ? " · " + named : ""));
 }
 
 /* ---- cut money to a goal ---- */
@@ -1952,7 +1974,7 @@ function sheetSettings(){
       <div class="say">Separated by commas. “Other” is always offered.</div></div>
 
     <div class="field"><label class="lab">Where money comes from</label>
-      <input class="input" id="f-income" value="${esc(state.settings.income.join(", "))}" placeholder="Wages, Tips">
+      <input class="input" id="f-income" value="${esc(state.settings.income.join(", "))}" placeholder="Tips, Salary">
       <div class="say">Tag money in and Spending totals each one on its own.</div></div>
 
     <button class="pill" style="width:100%;margin-top:18px" data-do="savesettings">Save</button>
@@ -2229,8 +2251,12 @@ document.addEventListener("click", e => {
 });
 
 /* Keep the free-text label as it is typed, so a re-render doesn't lose it. */
+/* The one free-text field either sheet has. Keeping the button in step as it
+   is typed is the difference between "Say who it was from" and "Add €20 · Dad". */
 document.addEventListener("input", e => {
-  if (e.target.id === "f-other") ui.other = e.target.value;
+  if (e.target.id !== "f-other") return;
+  ui.other = e.target.value;
+  refreshSheet();
 });
 
 if (themeQuery) {

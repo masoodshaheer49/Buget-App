@@ -447,7 +447,8 @@ const DEFAULT_LABELS = ["Coffee", "Groceries", "Transport", "Takeaway", "Bills"]
    the plan, the other is what the day happened to give you.
    WHO is the sentinel for "someone gave it to me" — the name is typed. */
 const WHO = "~who";
-const DEFAULT_INCOME = ["Tips", "Salary"];
+const TIPS = "Tips";                    // the one source held back in the jar
+const DEFAULT_INCOME = [TIPS, "Salary"];
 const OTHER = "Other";
 
 const TABS = ["Home", "Goals", "Bills", "Spending"];
@@ -478,7 +479,7 @@ function defaultState(){
       payEvery:30,          // days between pays
       updatedAt: now
     },
-    items: [],              // goal | bill | repeat
+    items: [],              // goal | bill | repeat | tips
     tx: [],
     tombstones: {},         // txId  -> deleted-at ms
     itemTombstones: {}      // itemId -> deleted-at ms
@@ -527,10 +528,17 @@ function demoState(){
     target:110, targetDate:null });
   const phone = mkItem({ type:"bill", name:"Phone", code:"PH", order:2,
     amount:20, cycleDays:28, cycleStart:fwd(17) });
-  s.items = [tuition, sister, phone];
+  const jar = mkItem({ type:"tips", name:"Tips", code:"TP", order:-1 });
+  s.items = [tuition, sister, phone, jar];
 
-  const push = t => s.tx.push(Object.assign({ id:uid(), date:todayISO(), note:"", label:"", itemId:null, billPeriod:null, auto:false }, t));
+  const push = t => s.tx.push(Object.assign({ id:uid(), date:todayISO(), note:"", label:"", itemId:null, billPeriod:null, auto:false, pair:null, jar:false }, t));
   push({ kind:"income", amount:1200, date:back(13), note:"Starting money" });
+  // A few days of tips, held back rather than spent — the jar in miniature.
+  [[7.05, 5], [4.20, 3], [11.30, 1]].forEach(([amt, ago]) => {
+    const id = uid();
+    push({ id, kind:"income", amount:amt, date:back(ago), label:TIPS, jar:true });
+    push({ kind:"allocate", amount:amt, itemId:jar.id, date:back(ago), pair:id, note:"Into the tip jar" });
+  });
   push({ kind:"allocate", amount:450, itemId:tuition.id, date:back(12), note:"Cut to Tuition" });
   push({ kind:"allocate", amount:22.56, itemId:sister.id, date:back(9), note:"Repaid" });
   [[8.25,"Coffee",0],[15,"Transport",0],[31.40,"Groceries",2],[26,"Transport",3],
@@ -587,8 +595,10 @@ function migrate(data){
     note: t.note ? String(t.note) : "",
     label: t.label ? String(t.label) : "",
     auto: !!t.auto,
-    itemId: t.itemId || null,            // allocate target (a goal)
-    billPeriod: t.billPeriod || null     // set when this expense settles a bill occurrence
+    itemId: t.itemId || null,            // allocate target (a goal, or the tip jar)
+    billPeriod: t.billPeriod || null,    // set when this expense settles a bill occurrence
+    pair: t.pair || null,                // the entry this one is the other half of
+    jar: !!t.jar                         // income held back in the tip jar
   }));
 
   if (num(data.schema) < 2 && Array.isArray(data.categories)) foldPockets(data, s);
@@ -597,7 +607,7 @@ function migrate(data){
     id: c.id || uid(),
     updatedAt: num(c.updatedAt),
     order: typeof c.order === "number" ? c.order : i,
-    type: ["goal","bill","repeat"].includes(c.type) ? c.type : "goal",
+    type: ["goal","bill","repeat","tips"].includes(c.type) ? c.type : "goal",
     name: String(c.name || "Untitled"),
     code: String(c.code || "").slice(0, 3),
     kind: c.kind === "debt" ? "debt" : "save",
@@ -803,7 +813,7 @@ function codeFor(name, all){
 function derive(){
   const items = state.items.filter(i => !i.archived).sort((a,b) => a.order - b.order);
   const held = {};
-  state.items.forEach(i => { if (i.type === "goal") held[i.id] = 0; });
+  state.items.forEach(i => { if (i.type === "goal" || i.type === "tips") held[i.id] = 0; });
 
   let cash = 0, cuts = 0;
   for (const t of state.tx) {
@@ -815,14 +825,17 @@ function derive(){
   Object.keys(held).forEach(k => held[k] = round2(held[k]));
 
   /* Money cut to a savings goal is spoken for but has not gone anywhere - it is
-     still in the account, and it turns up in a hand count. Money cut to a debt
-     goal has left the account, because cutting to a debt *is* the payment. So
-     only the first kind is added back to work out what you should be holding. */
-  let saved = 0;
+     still in the account, and it turns up in a hand count. Same for the tip jar:
+     those are coins in your pocket. Money cut to a debt goal has left the
+     account, because cutting to a debt *is* the payment. So only the first two
+     are added back to work out what you should be holding. */
+  let saved = 0, goalSaved = 0;
   state.items.forEach(i => {
-    if (i.type === "goal" && i.kind !== "debt") saved += held[i.id] || 0;
+    if (i.type === "goal" && i.kind !== "debt") { goalSaved += held[i.id] || 0; saved += held[i.id] || 0; }
+    else if (i.type === "tips") saved += held[i.id] || 0;
   });
 
+  const jar = state.items.find(i => i.type === "tips") || null;
   const left = round2(cash - cuts);
   return {
     items, held,
@@ -833,6 +846,9 @@ function derive(){
     cuts: round2(cuts),
     left,                              // the hero: what is actually spendable
     saved: round2(saved),              // spoken for, still in your pocket
+    goalSaved: round2(goalSaved),      // ... of which goals
+    jarId: jar ? jar.id : null,
+    tips: jar ? round2(held[jar.id] || 0) : 0,
     onHand: round2(left + saved)       // what a hand count should come to
   };
 }
@@ -857,6 +873,42 @@ function incomeBy(mk){
     g[k].count++;
   });
   return g;
+}
+
+/* ---- the tip jar ----------------------------------------------------------
+   Tips are not spending money until you say so. A tip lands as ordinary income
+   *and* is cut straight into a holding item in the same breath, so the balance
+   does not move; releasing is the cut given back. That means no new kind of
+   transaction, no second set of sums, and the hand count already knows the
+   coins are real, because a tips item counts as money still in your pocket. */
+
+/** Find the jar, making it the first time a tip is recorded. */
+function tipJar(){
+  let j = state.items.find(i => i.type === "tips");
+  if (!j) {
+    j = mkItem({ type:"tips", name:"Tips", code:"TP", order:-1 });
+    state.items.push(j);
+  }
+  return j;
+}
+/** Every line the jar's own docket shows: tips in, releases out. The paired
+    cut is deliberately left out — it is plumbing, not an entry. */
+function tipLog(){
+  const jarId = (state.items.find(i => i.type === "tips") || {}).id;
+  return state.tx.filter(t =>
+    (t.kind === "income" && t.jar)
+    || (jarId && t.kind === "allocate" && t.itemId === jarId && num(t.amount) < 0)
+  ).sort(byDateDesc);
+}
+/** Tips earned in a month — releases are not earnings, so they are not counted. */
+function tipsIn(mk){
+  let total = 0, days = {};
+  state.tx.forEach(t => {
+    if (t.kind !== "income" || !t.jar || monthOfISO(t.date) !== mk) return;
+    total += num(t.amount);
+    days[t.date] = true;
+  });
+  return { total: round2(total), days: Object.keys(days).length };
 }
 
 function incomeSince(iso){
@@ -1255,6 +1307,17 @@ function viewHome(d){
           : "A bill ahead will not clear"}</b>
         <span>${esc(named)}</span>
       </span></div>`;
+  }
+  /* The tip jar, once there is one. It earns a line on Home because money you
+     cannot see is money you forget to release. */
+  const tipMonth = tipsIn(thisMonth());
+  if (d.jarId && (d.tips > 0.005 || tipMonth.total > 0.005)) {
+    html += `<button class="lead" data-act="tips" style="margin-top:16px;border-top:1px dashed var(--dash);padding-top:13px">
+      <span class="when" style="width:26px">TP</span>
+      <span class="what">Tip jar${tipMonth.days ? " · " + tipMonth.days + " day" + (tipMonth.days === 1 ? "" : "s") + " this month" : ""}</span>
+      <span class="dots"></span>
+      <span class="amt">${esc(fmt(d.tips))}</span>
+    </button>`;
   }
   html += `</section>`;
 
@@ -1680,6 +1743,12 @@ function sheetIncome(re){
   if (from) {
     say = "Lands in your balance, and what you owe " + from.name + " goes up to "
         + fmt(round2(num(from.target) + amt)) + ".";
+  } else if (named === TIPS) {
+    const jarNow = round2(d.tips + amt);
+    const month = tipsIn(thisMonth());
+    say = "Held in your tip jar, not your spending money — " + fmt(jarNow) + " in it."
+        + (month.total > 0.005 ? " " + fmt(month.total) + " this month over " + month.days
+            + " day" + (month.days === 1 ? "" : "s") + "." : "");
   } else if (named) {
     const sofar = incomeBy(thisMonth())[named.toLowerCase()];
     say = sofar
@@ -1723,9 +1792,17 @@ function doIncome(){
   const from = state.items.find(i => i.id === ui.borrow && i.type === "goal" && i.kind === "debt");
   const named = ui.src === WHO ? (val("#f-other") || ui.other || "").trim() : ui.src;
   if (!from && !named) return toast(ui.src === WHO ? "Say who it was from" : "Pick where it came from");
-  addTx({ kind:"income", amount:amt, date:recordDate(),
+  const toJar = !from && named === TIPS;
+  const id = uid();
+  addTx({ id, kind:"income", amount:amt, date:recordDate(), jar:toJar,
           label: from ? "" : named,
           note: from ? "Borrowed from " + from.name : "" });
+  if (toJar) {
+    // Straight back out of the balance and into the jar, paired to the entry
+    // above so undoing the tip undoes the holding too.
+    addTx({ kind:"allocate", amount:amt, itemId:tipJar().id, date:recordDate(),
+            pair:id, note:"Into the tip jar" });
+  }
   if (from) {
     from.target = round2(num(from.target) + amt);
     from.updatedAt = Date.now();
@@ -1733,7 +1810,16 @@ function doIncome(){
   }
   closeSheet(); render();
   toast(from ? "+" + fmt(amt) + " · you owe " + fmt(goalFigure(from, derive().held[from.id] || 0))
-             : "+" + fmt(amt) + (named ? " · " + named : ""));
+      : toJar ? fmt(amt) + " into the jar · " + fmt(derive().tips) + " in it"
+      : "+" + fmt(amt) + (named ? " · " + named : ""));
+}
+function doRelease(){
+  const d = derive();
+  if (d.tips <= 0.005) return toast("Nothing in the jar yet");
+  addTx({ kind:"allocate", amount:-d.tips, itemId:d.jarId, date:todayISO(),
+          note:"Released into my money" });
+  closeSheet(); render();
+  toast("+" + fmt(d.tips) + " · yours to spend");
 }
 
 /* ---- cut money to a goal ---- */
@@ -1955,6 +2041,56 @@ function deleteItem(id){
     });
 }
 
+/* ---- the tip jar's own docket ----
+   Tips come a few coins at a time and mean nothing one by one; the month is the
+   figure worth seeing. So the log runs newest first under a heading per month
+   carrying that month's total, with each release shown as a line out — the jar
+   balances to what it holds, the same way the app does. */
+function sheetTips(){
+  ui.sheet = "tips";
+  const d = derive();
+  const log = tipLog();
+  const month = tipsIn(thisMonth());
+
+  let hist = "";
+  if (!log.length) {
+    hist = `<div class="empty">No tips yet. Record one with Money in → Tips and it lands here.</div>`;
+  } else {
+    let mk = null;
+    hist = log.map(t => {
+      let head = "";
+      const m = monthOfISO(t.date);
+      if (m !== mk) {
+        mk = m;
+        const got = tipsIn(m);
+        head = `<div class="sec" style="margin-top:18px">
+          <span class="lab">${esc(monthLabel(m, true))}</span>
+          <span class="fig" style="font-size:16px">${esc(fmt(got.total))}</span></div>`;
+      }
+      const out = t.kind === "allocate";
+      return head + `<div class="lead" style="border-bottom:1px dashed var(--dash)">
+        <span class="when" style="width:46px">${esc(relDay(t.date))}</span>
+        <span class="what">${out ? "Released into my money" : "Tip"}</span>
+        <span class="dots"></span>
+        <button class="undo" data-del-tx="${esc(t.id)}">Undo</button>
+        <span class="amt"${out ? "" : ' style="color:var(--pos)"'}>${out ? "&minus;" : "+"}${esc(fmt(Math.abs(num(t.amount))))}</span>
+      </div>`;
+    }).join("");
+  }
+
+  openSheet("Tip jar", `
+    <div class="lab" style="padding-top:0;letter-spacing:.2em">In the jar</div>
+    <div class="fig" style="font-size:46px;font-weight:500;letter-spacing:-.03em;line-height:1;margin-top:8px">${esc(fmt(d.tips))}</div>
+    <div style="font-size:14px;color:var(--ink-2);margin-top:8px">${
+      month.total > 0.005
+        ? esc(fmt(month.total) + " earned this month over " + month.days + " day" + (month.days === 1 ? "" : "s"))
+        : "Nothing yet this month."}</div>
+    <div class="say">Tips sit here instead of in your spending money. Release them when the month is done and the jar goes back to zero.</div>
+    <button class="pill ${d.tips > 0.005 ? "" : "dead"}" style="width:100%;margin-top:14px" data-do="release">${
+      d.tips > 0.005 ? "Release " + esc(fmt(d.tips)) + " into my money" : "Nothing to release"}</button>
+    ${hist}`);
+}
+
 /* ---- count what you actually have ----
    The app is only ever as right as what you told it. This asks what is really
    in your hand and your accounts, shows the gap, and writes the gap off in one
@@ -1968,10 +2104,14 @@ function sheetCount(re){
   const diff = round2(counted - d.onHand);
   const off = Math.abs(diff) > 0.005;
   const split = d.saved > 0.005;
+  /* Name what is actually being added back, so the row is never a claim about
+     goals when the money is really tip coins. */
+  const heldWhat = d.goalSaved > 0.005 && d.tips > 0.005 ? "goals and tips"
+                 : d.tips > 0.005 ? "the tip jar" : "goals";
 
   let say;
   if (!typed) {
-    say = "Add up your cash and your bank" + (split ? ", goal money included, " : " ") + "and type the lot.";
+    say = "Add up your cash and your bank" + (split ? ", " + heldWhat + " included, " : " ") + "and type the lot.";
   } else if (!off) {
     say = "Spot on. Nothing to change.";
   } else if (diff < 0) {
@@ -1989,7 +2129,7 @@ function sheetCount(re){
       <span class="fig">${esc(fmt(d.left))}</span>
     </div>
     <div class="setrow">
-      <span style="flex:1"><b>Held in goals</b><span class="sub">Spoken for, but still in your account</span></span>
+      <span style="flex:1"><b>Held in ${esc(heldWhat)}</b><span class="sub">Spoken for, but still in your pocket</span></span>
       <span class="fig">${esc(fmt(d.saved))}</span>
     </div>
     <div class="setrow" style="border-top:1px solid var(--ink);border-bottom:0">
@@ -2057,7 +2197,7 @@ function sheetSettings(){
 
     <div class="field"><label class="lab">Where money comes from</label>
       <input class="input" id="f-income" value="${esc(state.settings.income.join(", "))}" placeholder="Tips, Salary">
-      <div class="say">Tag money in and Spending totals each one on its own.</div></div>
+      <div class="say">Tag money in and Spending totals each one on its own. “Tips” is the one held back in the tip jar — rename it and new tips land in your balance like anything else.</div></div>
 
     <button class="pill" style="width:100%;margin-top:18px" data-do="savesettings">Save</button>
 
@@ -2202,13 +2342,23 @@ function resetAll(){
 
 /* ---- transactions ---- */
 function addTx(t){
-  state.tx.push(Object.assign({ id:uid(), date:todayISO(), note:"", label:"", auto:false, itemId:null, billPeriod:null }, t));
+  state.tx.push(Object.assign({ id:uid(), date:todayISO(), note:"", label:"", auto:false,
+                                itemId:null, billPeriod:null, pair:null, jar:false }, t));
   save();
 }
 function deleteTx(id){
-  state.tx = state.tx.filter(t => t.id !== id);
-  state.tombstones[id] = Date.now();   // or a repeat would simply generate it again
-  save(); render(); toast("Removed");
+  // A tip is two entries: the money in, and the cut holding it in the jar. Undo
+  // has to take both, or the balance drops while the jar keeps the coins.
+  const ids = [id].concat(state.tx.filter(t => t.pair === id).map(t => t.id));
+  state.tx = state.tx.filter(t => ids.indexOf(t.id) < 0);
+  ids.forEach(k => state.tombstones[k] = Date.now());   // or a repeat would simply generate it again
+  save();
+  // Undo can be tapped from inside the jar's log, which then has to redraw.
+  const body = ui.sheet === "tips" && sheetEl() && sheetEl().querySelector(".sheet-body");
+  const at = body ? body.scrollTop : 0;
+  render();
+  if (body) { sheetTips(); const back = sheetEl().querySelector(".sheet-body"); if (back) back.scrollTop = at; }
+  toast("Removed");
 }
 /** Tap a bill when it goes out: records the spend, tags the occurrence paid.
     Tap it again and the record comes back off. */
@@ -2312,6 +2462,7 @@ document.addEventListener("click", e => {
   if (doer) {
     const map = {
       spend:doSpend, income:doIncome, cut:doCut, take:doTake, count:doCount,
+      release:doRelease,
       savesettings:doSaveSettings, copybackup:doCopyBackup, "paste-restore":doPasteRestore
     };
     if (doer.dataset.do === "saveitem") return doSaveItem(doer.dataset.id || null, doer.dataset.type);
@@ -2326,6 +2477,7 @@ document.addEventListener("click", e => {
     spend: () => { ui.pad = ""; ui.label = ""; ui.other = ""; ui.date = todayISO(); ui.pick = false; sheetSpend(); },
     income: () => { ui.pad = ""; ui.borrow = ""; ui.src = ""; ui.date = todayISO(); ui.pick = false; sheetIncome(); },
     count: () => { ui.pad = ""; sheetCount(); },
+    tips: sheetTips,
     settings: sheetSettings,
     closesheet: () => closeSheet(),
     startfresh: startFresh,

@@ -82,19 +82,19 @@ Cutting takes the money out of **Money left** the moment you do it, which is the
 point: it is no longer yours to spend. It does not take it out of your bank,
 though — a savings goal is a decision, not a transfer. So **Count my money**
 measures your hand count against *what you should be holding*, spelling out the
-sum when a goal is holding anything:
+sum when a goal or the tip jar is holding anything:
 
 ```
   Money left                €792.72
-  Held in goals             €100.00
+  Held in goals and tips    €100.00
   ─────────────────────────────────
   So you should be holding  €892.72
 ```
 
 Money cut to a **debt** goal is not added back, because paying a debt really
 does empty the account — for a debt, the cut *is* the payment. Measuring against
-Money left alone would report every savings goal as money gone missing, and the
-write-off would quietly spend it.
+Money left alone would report every savings goal, and every coin in the tip jar,
+as money gone missing, and the write-off would quietly spend it.
 
 ### Bills
 
@@ -118,6 +118,36 @@ plan, the other is what the day happened to give you, and a figure that blurs
 the two tells you nothing about either. Tips land daily, so each day is its own
 entry, and while you are typing the amount the sheet says what tips have come to
 this month.
+
+### The tip jar
+
+**Tips do not land in your spending money.** They go into a jar, which Home
+shows under the headline, and they sit there until you say otherwise:
+
+```
+  TP   Tip jar · 12 days this month  ·········  €102.40
+```
+
+Tap it for the jar's own docket — what is in it, what the month has come to, and
+every day's tip newest first, under a heading per month carrying that month's
+total. **Release** empties the lot into your balance in one tap and drops the
+jar to zero, leaving a line out in the log so the jar's own history still adds
+up:
+
+```
+  SEPTEMBER 2026                                €102.40
+  Today   Released into my money      Undo      −€102.40
+  Yest    Tip                         Undo        +€9.15
+  22 Sep  Tip                         Undo        +€4.20
+```
+
+This is the point of the thing: a wage you can plan against, and beside it the
+money the days actually gave you, kept whole until the month is done instead of
+disappearing into a coffee. Undo works on any line, and undoing a tip takes its
+holding with it.
+
+Only the source named exactly **Tips** is held back. Rename it in Settings and
+money tagged with the new name lands in your balance like anything else.
 
 Both recording sheets carry a **When** row — Today, Yesterday, or a picker —
 because money rarely lands on the day you get round to typing it. Tips come the
@@ -270,9 +300,15 @@ A few things worth knowing if you change the code:
   currently sits in goals. That one line is the app. `onHand` adds back only the
   savings goals — what a hand count should come to — and is what Count my money
   reconciles against.
-- **Goals, bills and repeating charges share one `items` array**, told apart by
-  `type`. That is deliberate: the sync merge then has a single rule for all
-  three instead of three that can drift.
+- **Goals, bills, repeating charges and the tip jar share one `items` array**,
+  told apart by `type`. That is deliberate: the sync merge then has a single rule
+  for all of them instead of four that can drift.
+- **The tip jar is not a fourth kind of money.** A tip is ordinary income *and*
+  an `allocate` into a `tips` item in the same breath, so the balance nets to
+  nothing; releasing is that cut given back. No new transaction kind, no second
+  set of sums. The two entries are joined by `pair`, so undoing the tip takes
+  its holding with it — otherwise the balance drops while the jar keeps the
+  coins.
 - **Sync merges, it never replaces.** `mergeStates()` is the whole contract; if
   you add a field to the state, decide how it merges. Anything device-local
   (theme, the sync switch) goes in `LOCAL_SETTINGS` so it is never pushed.

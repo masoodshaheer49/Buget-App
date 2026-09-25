@@ -813,6 +813,17 @@ function derive(){
     else if (t.kind === "allocate" && held[t.itemId] !== undefined) { held[t.itemId] += amt; cuts += amt; }
   }
   Object.keys(held).forEach(k => held[k] = round2(held[k]));
+
+  /* Money cut to a savings goal is spoken for but has not gone anywhere - it is
+     still in the account, and it turns up in a hand count. Money cut to a debt
+     goal has left the account, because cutting to a debt *is* the payment. So
+     only the first kind is added back to work out what you should be holding. */
+  let saved = 0;
+  state.items.forEach(i => {
+    if (i.type === "goal" && i.kind !== "debt") saved += held[i.id] || 0;
+  });
+
+  const left = round2(cash - cuts);
   return {
     items, held,
     goals: items.filter(i => i.type === "goal"),
@@ -820,7 +831,9 @@ function derive(){
     repeats: items.filter(i => i.type === "repeat"),
     cash: round2(cash),
     cuts: round2(cuts),
-    left: round2(cash - cuts)          // the hero: what is actually spendable
+    left,                              // the hero: what is actually spendable
+    saved: round2(saved),              // spoken for, still in your pocket
+    onHand: round2(left + saved)       // what a hand count should come to
   };
 }
 
@@ -1952,12 +1965,13 @@ function sheetCount(re){
   const d = derive();
   const counted = padValue();
   const typed = (ui.pad || "").length > 0;
-  const diff = round2(counted - d.left);
+  const diff = round2(counted - d.onHand);
   const off = Math.abs(diff) > 0.005;
+  const split = d.saved > 0.005;
 
   let say;
   if (!typed) {
-    say = "Add up your cash, your bank and anything on a travel card, and type the lot.";
+    say = "Add up your cash and your bank" + (split ? ", goal money included, " : " ") + "and type the lot.";
   } else if (!off) {
     say = "Spot on. Nothing to change.";
   } else if (diff < 0) {
@@ -1966,11 +1980,29 @@ function sheetCount(re){
     say = "You have " + fmt(diff) + " more than the app thought — something came in that never got recorded.";
   }
 
-  const body = `
+  /* What you should be holding is not the same as what you may spend: a savings
+     goal takes money out of the headline without taking it out of the bank. Show
+     the sum as it is built, or the hand count reads as a shortfall every time. */
+  const target = split ? `
+    <div class="setrow" style="padding-top:0">
+      <span style="flex:1"><b>Money left</b><span class="sub">Yours to spend</span></span>
+      <span class="fig">${esc(fmt(d.left))}</span>
+    </div>
+    <div class="setrow">
+      <span style="flex:1"><b>Held in goals</b><span class="sub">Spoken for, but still in your account</span></span>
+      <span class="fig">${esc(fmt(d.saved))}</span>
+    </div>
+    <div class="setrow" style="border-top:1px solid var(--ink);border-bottom:0">
+      <span style="flex:1"><b>So you should be holding</b></span>
+      <span class="fig" style="font-size:22px">${esc(fmt(d.onHand))}</span>
+    </div>` : `
     <div class="setrow" style="padding-top:0">
       <span style="flex:1"><b>The app says</b><span class="sub">Money left, right now</span></span>
-      <span class="fig" style="font-size:22px">${esc(fmt(d.left))}</span>
-    </div>
+      <span class="fig" style="font-size:22px">${esc(fmt(d.onHand))}</span>
+    </div>`;
+
+  const body = `
+    ${target}
     <div class="lab" style="padding:16px 0 9px;letter-spacing:.2em">What you actually have</div>
     ${amountBlock()}
     <div class="say ${typed && off ? "warn" : ""}">${esc(say)}</div>
@@ -1986,13 +2018,15 @@ function doCount(){
   const d = derive();
   const counted = padValue();
   if (!(ui.pad || "").length) return toast("Type what you counted");
-  const diff = round2(counted - d.left);
+  const diff = round2(counted - d.onHand);
   if (Math.abs(diff) <= 0.005) { closeSheet(); return toast("Already matches"); }
   addTx(diff < 0
     ? { kind:"expense", amount:Math.abs(diff), label:"Other", note:"Not recorded", date:todayISO() }
     : { kind:"income", amount:diff, date:todayISO(), note:"Found when counting" });
   closeSheet(); render();
-  toast("Now says " + fmt(counted));
+  toast(d.saved > 0.005
+    ? "Now adds up to " + fmt(counted) + ", " + fmt(round2(counted - d.saved)) + " of it spendable"
+    : "Now says " + fmt(counted));
 }
 
 /* ---- settings ---- */

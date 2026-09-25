@@ -78,6 +78,24 @@ A goal is a pot you cut money to. Two kinds:
 A goal holds nothing until you cut money to it. That is the whole model — there
 are no envelopes to keep topped up.
 
+Cutting takes the money out of **Money left** the moment you do it, which is the
+point: it is no longer yours to spend. It does not take it out of your bank,
+though — a savings goal is a decision, not a transfer. So **Count my money**
+measures your hand count against *what you should be holding*, spelling out the
+sum when a goal is holding anything:
+
+```
+  Money left                €792.72
+  Held in goals             €100.00
+  ─────────────────────────────────
+  So you should be holding  €892.72
+```
+
+Money cut to a **debt** goal is not added back, because paying a debt really
+does empty the account — for a debt, the cut *is* the payment. Measuring against
+Money left alone would report every savings goal as money gone missing, and the
+write-off would quietly spend it.
+
 ### Bills
 
 Bills are **listed, never reserved**. No money sits in them. Instead the app
@@ -249,7 +267,9 @@ A few things worth knowing if you change the code:
   figure is recomputed from that list on each render (`derive()`), so history and
   deletions always stay consistent.
 - **`left = cash − cuts`.** `cash` is income minus every expense; `cuts` is what
-  currently sits in goals. That one line is the app.
+  currently sits in goals. That one line is the app. `onHand` adds back only the
+  savings goals — what a hand count should come to — and is what Count my money
+  reconciles against.
 - **Goals, bills and repeating charges share one `items` array**, told apart by
   `type`. That is deliberate: the sync merge then has a single rule for all
   three instead of three that can drift.

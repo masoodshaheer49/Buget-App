@@ -102,6 +102,11 @@ body{
   -webkit-font-smoothing:antialiased;
   -webkit-tap-highlight-color:transparent;
   overscroll-behavior:none;
+  /* Double-tap zooms by default, and on a keypad you double-tap constantly —
+     two quick 7s left the whole app scaled up. This drops the wait for a second
+     tap, which is what makes the gesture exist. Pinch to zoom still works. */
+  touch-action:manipulation;
+  -webkit-text-size-adjust:100%;
 }
 /* The darker ground only shows where there is room for it to read as a page. */
 @media (min-width:470px){ body{background:var(--page)} }
@@ -186,7 +191,7 @@ input,select,textarea{font:inherit;color:inherit}
    Pills, the only button shape here
    ============================================================ */
 .pill{
-  border-radius:999px;padding:17px;text-align:center;
+  border-radius:999px;padding:clamp(11px,2vh,17px);text-align:center;
   font-size:15px;font-weight:600;letter-spacing:-.005em;
   background:var(--ink);color:var(--paper);
   transition:opacity .12s ease;
@@ -265,17 +270,21 @@ input,select,textarea{font:inherit;color:inherit}
 #sheet{
   position:absolute;left:0;right:0;bottom:0;z-index:61;
   background:var(--paper);border-radius:22px 22px 0 0;
-  padding:0 var(--pad) calc(env(safe-area-inset-bottom) + 22px);
-  max-height:94%;display:flex;flex-direction:column;
+  padding:0 var(--pad) calc(env(safe-area-inset-bottom) + clamp(8px,1.5vh,20px));
+  max-height:98%;display:flex;flex-direction:column;
   box-shadow:0 -8px 40px rgba(42,38,34,.28);
   animation:up .26s cubic-bezier(.22,1,.36,1);
 }
 @keyframes up{from{transform:translateY(100%)}to{transform:none}}
+/* Recording is one screen or it is nothing: a keypad you have to scroll to
+   reach is slower than a notebook. So every vertical measure in a sheet is a
+   share of the screen rather than a fixed number of pixels — generous on a Pro
+   Max, tight on an SE, never scrolling on either. */
 .sheet-head{
   flex:none;display:flex;align-items:center;justify-content:space-between;gap:12px;
-  padding:18px 0 12px;
+  padding:clamp(9px,1.7vh,18px) 0 clamp(5px,1.1vh,12px);
 }
-.sheet-head h3{margin:0;font-family:var(--serif);font-size:20px;font-weight:500;letter-spacing:-.01em}
+.sheet-head h3{margin:0;font-family:var(--serif);font-size:clamp(17px,2.4vh,20px);font-weight:500;letter-spacing:-.01em}
 .sheet-head .close{
   font-family:var(--mono);font-weight:500;font-size:10px;letter-spacing:.16em;
   text-transform:uppercase;color:var(--ink-3);
@@ -285,38 +294,44 @@ input,select,textarea{font:inherit;color:inherit}
    screen — so the amount and the pills slid out of view. */
 .sheet-body{overflow-y:auto;overflow-x:hidden;scrollbar-width:none}
 .sheet-body::-webkit-scrollbar{width:0}
-.say{font-size:13.5px;color:var(--ink-3);padding-top:12px}
+.say{font-size:clamp(12.5px,1.75vh,13.5px);color:var(--ink-3);padding-top:clamp(6px,1.2vh,12px)}
 .say.warn{color:var(--warn)}
+/* A section heading inside a sheet. */
+.lab.head{padding:clamp(6px,1.5vh,14px) 0 clamp(4px,1vh,9px);letter-spacing:.2em}
+/* The one action a sheet ends on. */
+.pill.go{width:100%;margin-top:clamp(8px,1.6vh,14px)}
 
 /* the big amount being typed */
-.amount{display:flex;align-items:baseline;gap:8px;padding-bottom:9px;border-bottom:2px solid var(--ink)}
-.amount .cur{font-family:var(--serif);font-size:22px;color:var(--ink-3)}
+.amount{display:flex;align-items:baseline;gap:8px;padding-bottom:clamp(4px,.9vh,9px);border-bottom:2px solid var(--ink)}
+.amount .cur{font-family:var(--serif);font-size:clamp(17px,2.4vh,22px);color:var(--ink-3)}
 .amount .val{
-  flex:1;font-family:var(--serif);font-size:42px;font-weight:500;
+  flex:1;font-family:var(--serif);font-size:clamp(26px,4.6vh,42px);font-weight:500;
   letter-spacing:-.03em;line-height:1;font-variant-numeric:tabular-nums;
   min-width:0;overflow:hidden;
 }
 
-.keys{display:grid;grid-template-columns:repeat(3,1fr);margin-top:12px}
+.keys{display:grid;grid-template-columns:repeat(3,1fr);margin-top:clamp(4px,1vh,12px)}
 .keys button{
-  padding:14px 0;text-align:center;
-  font-family:var(--mono);font-weight:500;font-size:20px;
+  padding:clamp(5px,1.25vh,14px) 0;text-align:center;
+  font-family:var(--mono);font-weight:500;font-size:clamp(16px,2.2vh,20px);
   border-bottom:1px dashed var(--dash);
 }
 .keys button:active{background:var(--quiet)}
 
 .chips{display:flex;gap:7px;flex-wrap:wrap}
 .chips button{
-  border-radius:999px;padding:9px 13px;font-size:13.5px;font-weight:500;
+  border-radius:999px;padding:clamp(5px,1vh,9px) 13px;
+  font-size:clamp(12.5px,1.75vh,13.5px);font-weight:500;
   background:var(--quiet);color:var(--ink-2);border:1px solid var(--quiet-line);
   max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
 }
 .chips button[aria-pressed="true"]{background:var(--ink);color:var(--paper);border-color:var(--ink)}
 
-.field{margin-top:11px}
+.field{margin-top:clamp(6px,1.2vh,11px)}
 .field > label{display:block;margin-bottom:7px}
 .input{
-  width:100%;min-width:0;max-width:100%;padding:12px 14px;border-radius:14px;
+  /* 16px or iOS zooms the page the moment the field takes focus. */
+  width:100%;min-width:0;max-width:100%;padding:clamp(8px,1.4vh,12px) 14px;border-radius:14px;
   border:1px solid var(--quiet-line);background:var(--paper);
   font-size:16px;outline:none;
 }
@@ -345,7 +360,7 @@ textarea.input{font-family:var(--mono);font-size:11.5px;line-height:1.5;resize:v
 
 .setrow{
   display:flex;align-items:center;gap:12px;width:100%;text-align:left;
-  padding:15px 0;border-bottom:1px dashed var(--dash);
+  padding:clamp(10px,1.9vh,15px) 0;border-bottom:1px dashed var(--dash);
 }
 .setrow:last-of-type{border-bottom:0}
 .setrow b{font-weight:600;font-size:15px}
@@ -1682,12 +1697,16 @@ function refreshSheet(){
    then wears the date it chose. */
 function dateRow(){
   const today = todayISO(), yest = isoBack(1), cur = recordDate();
+  /* Which chip is lit follows the date itself, not how it was chosen. Picking
+     yesterday out of the calendar lights Yesterday — otherwise the third chip
+     read "Yest" beside an unlit Yesterday, two chips for the same day. */
+  const isToday = cur === today, isYest = cur === yest, far = !isToday && !isYest;
   return `
-    <div class="lab" style="padding:14px 0 9px;letter-spacing:.2em">When</div>
+    <div class="lab head">When</div>
     <div class="chips">
-      <button data-when="${today}" aria-pressed="${!ui.pick && cur === today}">Today</button>
-      <button data-when="${yest}" aria-pressed="${!ui.pick && cur === yest}">Yesterday</button>
-      <button data-when="pick" aria-pressed="${!!ui.pick}">${esc(ui.pick && cur !== today ? relDay(cur) : "Pick a date")}</button>
+      <button data-when="${today}" aria-pressed="${isToday}">Today</button>
+      <button data-when="${yest}" aria-pressed="${isYest}">Yesterday</button>
+      <button data-when="pick" aria-pressed="${far}">${esc(far ? relDay(cur) : "Pick a date")}</button>
     </div>
     ${ui.pick ? `<div class="field"><input class="input" type="date" id="f-when" value="${esc(cur)}" max="${today}"></div>` : ""}`;
 }
@@ -1701,13 +1720,13 @@ function sheetSpend(re){
   const can = amt > 0 && !!named;
   const body = `
     ${amountBlock()}
-    <div class="lab" style="padding:14px 0 9px;letter-spacing:.2em">What was it for</div>
+    <div class="lab head">What was it for</div>
     <div class="chips">${labels.map(l =>
       `<button data-chip="${esc(l)}" aria-pressed="${ui.label === l}">${esc(l)}</button>`).join("")}</div>
     ${ui.label === OTHER ? `<div class="field"><input class="input" id="f-other" value="${esc(ui.other)}" placeholder="Type what it was for"></div>` : ""}
     ${dateRow()}
     ${keypad()}
-    <button class="pill ${can ? "" : "dead"}" style="width:100%;margin-top:14px" data-do="spend">${
+    <button class="pill go ${can ? "" : "dead"}" data-do="spend">${
       !amt ? "Enter an amount" : (!named ? "Pick what it was for" : "Record " + esc(fmt(amt)) + " · " + esc(named))}</button>`;
   if (re) { sheetEl().querySelector(".sheet-body").innerHTML = body; }
   else openSheet("Spent", body);
@@ -1766,7 +1785,7 @@ function sheetIncome(re){
   const can = amt > 0 && (!!from || !!named);
   const body = `
     ${amountBlock()}
-    <div class="lab" style="padding:14px 0 9px;letter-spacing:.2em">Where it came from</div>
+    <div class="lab head">Where it came from</div>
     <div class="chips">
       ${state.settings.income.map(s =>
         `<button data-src="${esc(s)}" aria-pressed="${!from && ui.src === s}">${esc(s)}</button>`).join("")}
@@ -1777,7 +1796,7 @@ function sheetIncome(re){
     ${dateRow()}
     <div class="say">${esc(say)}</div>
     ${keypad()}
-    <button class="pill ${can ? "" : "dead"}" style="width:100%;margin-top:14px" data-do="income">${
+    <button class="pill go ${can ? "" : "dead"}" data-do="income">${
       amt <= 0 ? "Enter an amount"
       : from ? "Borrow " + esc(fmt(amt)) + " from " + esc(from.name)
       : named ? "Add " + esc(fmt(amt)) + " · " + esc(named)
@@ -1848,7 +1867,7 @@ function sheetCut(re){
       d.left <= 0 ? "You have nothing spare — your balance is " + fmt(Math.abs(d.left)) + " under."
       : amt > d.left ? "That is more than your " + fmt(d.left) + " balance."
       : "Comes straight out of your " + fmt(d.left) + " balance.")}</div>
-    <button class="pill ${ok ? "" : "dead"}" style="width:100%;margin-top:12px" data-do="cut">${
+    <button class="pill go ${ok ? "" : "dead"}" data-do="cut">${
       amt > 0 ? "Cut " + esc(fmt(amt)) + " now" : "Enter an amount"}</button>`;
   if (re) sheetEl().querySelector(".sheet-body").innerHTML = body;
   else openSheet((g.kind === "debt" ? "Pay off " : "Cut to ") + g.name, body);
@@ -1883,7 +1902,7 @@ function sheetTake(re){
     <div class="say ${amt > saved ? "warn" : ""}">${esc(
       amt > saved ? g.name + " only holds " + fmt(saved) + "."
       : "Goes back into your balance. " + (g.kind === "debt" ? "You will owe it again." : "The date slips."))}</div>
-    <button class="pill ${ok ? "" : "dead"}" style="width:100%;margin-top:12px" data-do="take">${
+    <button class="pill go ${ok ? "" : "dead"}" data-do="take">${
       amt > 0 ? "Take " + esc(fmt(amt)) + " back" : "Enter an amount"}</button>`;
   if (re) sheetEl().querySelector(".sheet-body").innerHTML = body;
   else openSheet("Take back from " + g.name, body);
@@ -2079,14 +2098,14 @@ function sheetTips(){
   }
 
   openSheet("Tip jar", `
-    <div class="lab" style="padding-top:0;letter-spacing:.2em">In the jar</div>
+    <div class="lab head" style="padding-top:0">In the jar</div>
     <div class="fig" style="font-size:46px;font-weight:500;letter-spacing:-.03em;line-height:1;margin-top:8px">${esc(fmt(d.tips))}</div>
     <div style="font-size:14px;color:var(--ink-2);margin-top:8px">${
       month.total > 0.005
         ? esc(fmt(month.total) + " earned this month over " + month.days + " day" + (month.days === 1 ? "" : "s"))
         : "Nothing yet this month."}</div>
     <div class="say">Tips sit here instead of in your spending money. Release them when the month is done and the jar goes back to zero.</div>
-    <button class="pill ${d.tips > 0.005 ? "" : "dead"}" style="width:100%;margin-top:14px" data-do="release">${
+    <button class="pill go ${d.tips > 0.005 ? "" : "dead"}" data-do="release">${
       d.tips > 0.005 ? "Release " + esc(fmt(d.tips)) + " into my money" : "Nothing to release"}</button>
     ${hist}`);
 }
@@ -2143,11 +2162,11 @@ function sheetCount(re){
 
   const body = `
     ${target}
-    <div class="lab" style="padding:16px 0 9px;letter-spacing:.2em">What you actually have</div>
+    <div class="lab head">What you actually have</div>
     ${amountBlock()}
     <div class="say ${typed && off ? "warn" : ""}">${esc(say)}</div>
     ${keypad()}
-    <button class="pill ${typed && off ? "" : "dead"}" style="width:100%;margin-top:14px" data-do="count">${
+    <button class="pill go ${typed && off ? "" : "dead"}" data-do="count">${
       !typed ? "Type what you counted"
       : !off ? "Nothing to record"
       : "Record the " + esc(fmt(Math.abs(diff))) + " difference"}</button>`;

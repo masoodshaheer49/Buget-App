@@ -321,6 +321,16 @@ A few things worth knowing if you change the code:
 - **Every rule is dashed and every figure is joined to its name by dots.** Rows
   are perforations on a docket, not cards. The one solid rule is the one that
   separates a section that sums.
+- **A recording sheet fits one screen, on every phone.** Amount, chips, date,
+  keypad and the button it ends on are all reachable without a scroll, because
+  a keypad you have to scroll to is slower than a notebook. Every vertical
+  measure inside a sheet is therefore a `clamp()` on `vh` rather than a fixed
+  number of pixels — generous on a Pro Max, tight on an SE, scrolling on
+  neither. Add a row to a sheet and check it still fits at 320×568.
+- **`touch-action:manipulation` on the body.** Without it a double tap zooms,
+  and on a keypad you double-tap constantly. Pinch to zoom still works. Text
+  inputs stay at 16px for the same family of reason: anything smaller and iOS
+  zooms the page the moment the field takes focus.
 - **Figures are set in Newsreader**, a serif, with tabular figures so columns
   line up; sentences are Barlow; labels and dates are IBM Plex Mono, uppercase
   and widely tracked. Three voices, each with one job.

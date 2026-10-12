@@ -160,11 +160,45 @@ belongs to instead, so a loan can never be mistaken for earnings.
 ### Spending
 
 Every spend carries a **label**, not a pocket — Coffee, Groceries, Transport,
-whatever you set in Settings, plus *Other* for anything else. The Spending tab
-totals the month, ranks where it went by label, totals what came in by source,
-and lists **every** record — in and out — newest first with an **Undo** beside
-each. Money in is shown in green with a `+`, because an entry you cannot see is
-an entry you cannot correct.
+whatever you set in Settings, plus *Other* for anything else.
+
+The Spending tab reads **a week or a month at a time**. Pick *Week* or *Month*
+at the top, and step back with **‹** — **›** comes forward again, as far as
+now. The headline is what that week or month cost, what it came to a day, and
+how it compares with the one before:
+
+```
+  [Week] [Month]                          ‹  ›
+  SPENT LAST WEEK
+  €48.14
+  5–11 Oct · 8 records · €6.88 a day
+  €11.35 less than 28 Sep – 4 Oct
+
+  WEEK BY WEEK
+  THIS WEEK        ▪▪▪▪▪▪▪▪▪▪·········     €32
+  LAST WEEK        ■■■■■■■■■■■■■■■····     €48
+  28 SEP – 4 OCT   ▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪     €59
+```
+
+Under it, the last six weeks or months sit side by side, each with a gauge
+against the busiest of them, so a heavy week stands out without reading a
+figure. Tap one to open it. Going back further than six slides the list along
+with you. Neither the arrow nor the list goes back past your first record, so
+you never step through empty weeks from before you started.
+
+Switching keeps your place: from a week in September, *Month* opens September,
+and *Week* from a month opens its last week. Which of the two you read by is
+remembered on this device and is not synced.
+
+Everything below follows the period you are reading: where it went by label,
+what came in by source, and **every** record in it — in and out — under a
+heading per day carrying what that day cost, with an **Undo** beside each.
+Money in is shown in green with a `+`, because an entry you cannot see is an
+entry you cannot correct.
+
+The daily rate counts only days that have happened, and none from before your
+first record. A month you started on the 20th is not 31 days of data. Weeks
+start on Monday; set `WEEK_STARTS` to `0` in `index.html` for Sunday.
 
 ### Payday, or not
 
@@ -292,6 +326,10 @@ copy of the app to maintain.
 
 A few things worth knowing if you change the code:
 
+- **A week or a month is a pair of dates.** `periodAt(by, back)` returns the
+  inclusive `from`/`to` ISO dates of the period `back` steps behind this one,
+  and every Spending figure is filtered by `inPeriod()` — two string
+  comparisons. Nothing about periods is stored, so they never need migrating.
 - **Balances are never stored.** The only saved records are the settings, the
   items (goals, bills, repeating charges) and a flat list of transactions. Every
   figure is recomputed from that list on each render (`derive()`), so history and

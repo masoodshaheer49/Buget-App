@@ -48,6 +48,7 @@
   --warn:#7A4E12;        /* at risk, behind */
   --warn-bg:#F6E7D4;
   --cut:#8C7A53;         /* money cut away to goals */
+  --mute:#9A9286;        /* a gauge that is context, beside the one being read */
 
   --serif:'Newsreader',Georgia,'Times New Roman',serif;
   --sans:'Barlow',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;
@@ -79,6 +80,7 @@
   --warn:#E0B070;
   --warn-bg:#352A19;
   --cut:#A8946A;
+  --mute:#6B6457;
   color-scheme:dark;
 }
 
@@ -261,6 +263,32 @@ input,select,textarea{font:inherit;color:inherit}
 .hatch-ink{background:repeating-linear-gradient(90deg,var(--ink) 0 7px,var(--paper) 7px 9px)}
 .hatch-cut{background:repeating-linear-gradient(90deg,var(--cut) 0 7px,var(--paper) 7px 9px)}
 .hatch-neg{background:repeating-linear-gradient(90deg,var(--neg) 0 7px,var(--paper) 7px 9px)}
+.hatch-mute{background:repeating-linear-gradient(90deg,var(--mute) 0 7px,var(--paper) 7px 9px)}
+
+/* ============================================================
+   Weeks and months — step through them, and see a few side by side
+   ============================================================ */
+.step{
+  width:34px;height:34px;flex:none;display:grid;place-items:center;
+  border-radius:999px;border:1px solid var(--quiet-line);color:var(--ink-2);
+}
+.step:active{background:var(--quiet)}
+.step:disabled{opacity:.35;cursor:default}
+.step:disabled:active{background:none}
+
+/* One row per week or month: its name, a gauge against the busiest of them,
+   the figure. The gauge's dotted ground is the leader. The one being read is
+   in ink and the rest stand back, so the eye lands on it first. */
+.span-row{display:flex;align-items:center;gap:12px;width:100%;text-align:left;padding:10px 0;border-bottom:1px dashed var(--dash)}
+.span-row .span-name{
+  flex:none;width:118px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  font-family:var(--mono);font-weight:500;font-size:10.5px;letter-spacing:.05em;
+  text-transform:uppercase;color:var(--ink-3);
+}
+.span-row .gauge{flex:1;min-width:24px;height:8px}
+.span-row .span-amt{flex:none;min-width:56px;text-align:right;font-family:var(--serif);font-size:16px;font-variant-numeric:tabular-nums;color:var(--ink-3)}
+.span-row[aria-current="true"] .span-name,
+.span-row[aria-current="true"] .span-amt{color:var(--ink)}
 
 /* ============================================================
    Sheets — paper sliding up over the docket
@@ -477,7 +505,8 @@ const TABS = ["Home", "Goals", "Bills", "Spending"];
    ============================================================ */
 let state = null;
 let ui = { tab:"home", sheet:null, pad:"", label:"", other:"", borrow:"", src:"",
-           date:"", pick:false, goalIx:0, seeAll:false };
+           date:"", pick:false, goalIx:0, seeAll:false,
+           back:0 };             // Spending: how many weeks or months back you are reading
 let toastTimer = null;
 
 function uid(){ return Date.now().toString(36) + Math.random().toString(36).slice(2, 8); }
@@ -492,6 +521,7 @@ function defaultState(){
       income: DEFAULT_INCOME.slice(),
       payday:null,          // "YYYY-MM-DD" of the next pay, or null
       payEvery:30,          // days between pays
+      spendBy:"week",       // Spending reads a "week" or a "month" at a time
       updatedAt: now
     },
     items: [],              // goal | bill | repeat | tips
@@ -520,7 +550,7 @@ function freshState(){
   if (state) {
     state.tx.forEach(t => next.tombstones[t.id] = now);
     state.items.forEach(i => next.itemTombstones[i.id] = now);
-    ["currency","theme","name","sync"].forEach(k => next.settings[k] = state.settings[k]);
+    ["currency","theme","name","sync","spendBy"].forEach(k => next.settings[k] = state.settings[k]);
   }
   return next;
 }
@@ -590,6 +620,7 @@ function migrate(data){
   if (["auto","dark","light"].indexOf(s.settings.theme) < 0) s.settings.theme = "auto";
   s.settings.demo = !!s.settings.demo;
   s.settings.sync = s.settings.sync !== false;
+  if (s.settings.spendBy !== "month") s.settings.spendBy = "week";
   s.settings.updatedAt = num(s.settings.updatedAt);
   s.settings.payEvery = clamp(Math.round(num(s.settings.payEvery)) || 30, 1, 365);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(s.settings.payday || "")) s.settings.payday = null;
@@ -767,6 +798,70 @@ function monthLabel(mk, long){
   return new Date(y, (m||1)-1, 1).toLocaleDateString(undefined, { month: long ? "long" : "short", year:"numeric" });
 }
 function daysBetween(a, b){ return Math.round((parseISO(b) - parseISO(a)) / 86400000); }
+function addDays(iso, n){ const d = parseISO(iso); d.setDate(d.getDate() + n); return isoOf(d); }
+
+/* ---- weeks and months ----
+   Spending is read a week or a month at a time, and any one of them can be
+   stepped back to. A period is an inclusive pair of ISO dates, so "is this
+   record in it" is two string comparisons. `back` counts whole periods before
+   the one you are in: 0 is this week, 1 last week. */
+const WEEK_STARTS = 1;                  // Monday. 0 would start weeks on Sunday.
+function weekStartOf(iso){
+  const d = parseISO(iso);
+  d.setDate(d.getDate() - (d.getDay() - WEEK_STARTS + 7) % 7);
+  return isoOf(d);
+}
+function periodAt(by, back){
+  if (by === "month") {
+    const mk = shiftMonth(thisMonth(), -back);
+    const [y, m] = mk.split("-").map(Number);
+    return { by, back, from: mk + "-01", to: isoOf(new Date(y, m, 0)) };
+  }
+  const from = addDays(weekStartOf(todayISO()), -7 * back);
+  return { by, back, from, to: addDays(from, 6) };
+}
+function inPeriod(t, p){ return t.date >= p.from && t.date <= p.to; }
+/** How many periods back the one holding this date is. */
+function periodsSince(by, iso){
+  if (by === "month") {
+    const [y, m] = String(iso).split("-").map(Number), now = new Date();
+    return (now.getFullYear() - y) * 12 + now.getMonth() + 1 - m;
+  }
+  return Math.round(daysBetween(weekStartOf(iso), weekStartOf(todayISO())) / 7);
+}
+/** "12 – 18 Oct", in the reader's own order; the year only when it is not this one. */
+function rangeText(from, to, noYear){
+  const a = parseISO(from), b = parseISO(to);
+  const opts = { day:"numeric", month:"short" };
+  if (!noYear && b.getFullYear() !== new Date().getFullYear()) opts.year = "numeric";
+  try { return new Intl.DateTimeFormat(undefined, opts).formatRange(a, b); }
+  catch (e) { return a.toLocaleDateString(undefined, opts) + " – " + b.toLocaleDateString(undefined, opts); }
+}
+/** A period as it reads mid-sentence: "this week", "12 – 18 Oct", "in October". */
+function periodPhrase(p){
+  if (p.by === "month") {
+    const long = monthLabel(p.from.slice(0, 7), true);
+    return "in " + (p.from.slice(0, 4) === thisMonth().slice(0, 4) ? long.split(" ")[0] : long);
+  }
+  return p.back === 0 ? "this week" : p.back === 1 ? "last week" : rangeText(p.from, p.to);
+}
+/** A period as a row names it: "This week", "28 Sep – 4 Oct", "October", "Dec 2025". */
+function periodName(p){
+  if (p.by === "month") {
+    const mk = p.from.slice(0, 7);
+    return mk.slice(0, 4) === thisMonth().slice(0, 4) ? monthLabel(mk, true).split(" ")[0] : monthLabel(mk);
+  }
+  return p.back === 0 ? "This week" : p.back === 1 ? "Last week" : rangeText(p.from, p.to, true);
+}
+/** A day heading: "Today", "Yesterday", "Mon 6 Oct". */
+function dayName(iso){
+  const diff = daysBetween(todayISO(), iso);
+  if (diff === 0) return "Today";
+  if (diff === -1) return "Yesterday";
+  const opts = { weekday:"short", day:"numeric", month:"short" };
+  if (parseISO(iso).getFullYear() !== new Date().getFullYear()) opts.year = "numeric";
+  return parseISO(iso).toLocaleDateString(undefined, opts);
+}
 
 function currencyMeta(){
   return CURRENCIES.find(c => c.code === state.settings.currency) || CURRENCIES[0];
@@ -868,17 +963,17 @@ function derive(){
   };
 }
 
-function spentIn(mk){
+function spentIn(p){
   let total = 0;
-  for (const t of state.tx) if (t.kind === "expense" && monthOfISO(t.date) === mk) total += num(t.amount);
+  for (const t of state.tx) if (t.kind === "expense" && inPeriod(t, p)) total += num(t.amount);
   return round2(total);
 }
-/** This month's money in, grouped by where it came from. Borrowed money is
+/** A period's money in, grouped by where it came from. Borrowed money is
     grouped under the goal it belongs to, so a wage and a loan never blur. */
-function incomeBy(mk){
+function incomeBy(p){
   const g = {};
   state.tx.forEach(t => {
-    if (t.kind !== "income" || monthOfISO(t.date) !== mk) return;
+    if (t.kind !== "income" || !inPeriod(t, p)) return;
     const name = (t.label || "").trim()
       || (t.note && /^Borrowed from /.test(t.note) ? t.note.replace(/^Borrowed from /, "Borrowed · ") : "")
       || "Money in";
@@ -1120,8 +1215,8 @@ function canon(v){
 }
 /** Device-local settings are never pushed: your laptop can be light while
     your phone is dark, and turning sync off on one must not turn it off on
-    the other. */
-const LOCAL_SETTINGS = ["theme", "sync", "demo"];
+    the other. Reading Spending by the month on one is not a reason to on both. */
+const LOCAL_SETTINGS = ["theme", "sync", "demo", "spendBy"];
 
 function syncPayload(s){
   const settings = {};
@@ -1361,7 +1456,7 @@ function viewHome(d){
   /* Latest */
   const latest = state.tx.filter(t => t.kind === "expense").sort(byDateDesc);
   html += `<div style="margin-top:14px">
-    <div class="sec"><span class="lab">Latest</span>${latest.length ? `<button class="more" data-tab-jump="spending">See all ${latest.length}</button>` : ""}</div>`;
+    <div class="sec"><span class="lab">Latest</span>${latest.length ? `<button class="more" data-tab-jump="spending">See more</button>` : ""}</div>`;
   if (!latest.length) html += `<div class="empty">Nothing spent yet.</div>`;
   else html += latest.slice(0, 2).map(t => `
     <div class="lead">
@@ -1516,26 +1611,91 @@ function viewBills(d){
   return html;
 }
 
-/* ---------- Spending ---------- */
+/* ---------- Spending ----------
+   Read a week or a month at a time. The arrows step back through them; the
+   list under the headline puts the last few side by side, and a tap opens
+   any of them. Everything below follows the period being read — where it
+   went, what came in, and the records, under a heading per day. */
+function firstRecordISO(){
+  let first = null;
+  state.tx.forEach(t => { if ((t.kind === "expense" || t.kind === "income") && (!first || t.date < first)) first = t.date; });
+  return first;
+}
 function viewSpending(d){
-  const mk = thisMonth();
-  const spent = spentIn(mk);
-  const out = state.tx.filter(t => t.kind === "expense");
+  const by = state.settings.spendBy;
+  const first = firstRecordISO();
+  /* Nothing before your first record: a run of empty weeks is not history. */
+  const oldest = first ? Math.max(0, periodsSince(by, first)) : 0;
+  ui.back = clamp(ui.back, 0, oldest);
+  const p = periodAt(by, ui.back);
+  const spent = spentIn(p);
   /* Money in belongs in the list too: it is the only place an entry can be
      looked at, and a mistyped tip has to be undoable somewhere. */
-  const all = state.tx.filter(t => t.kind === "expense" || t.kind === "income").sort(byDateDesc);
-  const shown = ui.seeAll ? all : all.slice(0, 40);
-  const burn = burnRate();
+  const recs = state.tx.filter(t => (t.kind === "expense" || t.kind === "income") && inPeriod(t, p)).sort(byDateDesc);
+  const outs = recs.filter(t => t.kind === "expense").length;
+  const word = by === "week" ? "week" : "month";
 
-  let html = `<div style="padding:20px 0 20px">
-    <div class="lab">Spent in ${esc(monthLabel(mk, true).split(" ")[0])}</div>
-    <div class="fig" style="font-size:52px;font-weight:500;letter-spacing:-.03em;line-height:1;margin-top:8px">${esc(fmt(spent))}</div>
-    <div style="font-size:14px;color:var(--ink-2);margin-top:8px">${out.length} record${out.length === 1 ? "" : "s"} · ${esc(fmt(burn.perDay))} a day so far</div>`;
+  /* The daily rate counts only days that have happened, and none before your
+     first record — a month you started on the 20th is not 31 days of data. */
+  const today = todayISO();
+  const start = first && first > p.from ? first : p.from;
+  const days = Math.max(1, daysBetween(start, p.to < today ? p.to : today) + 1);
+  const line = [];
+  if (by === "week" && ui.back < 2) line.push(rangeText(p.from, p.to));
+  line.push(outs + " record" + (outs === 1 ? "" : "s"));
+  if (outs) line.push(fmt(spent / days) + " a day" + (ui.back === 0 ? " so far" : ""));
+
+  let versus = "";
+  if (ui.back < oldest) {
+    const before = periodAt(by, ui.back + 1);
+    const gap = round2(spent - spentIn(before));
+    const than = periodPhrase(before).replace(/^in /, "");
+    versus = Math.abs(gap) < 0.005 ? "The same as " + than
+      : fmt(Math.abs(gap)) + (gap < 0 ? " less than " : " more than ") + than;
+  }
+
+  const chev = dir => `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="${dir < 0 ? "M15 5l-7 7 7 7" : "M9 5l7 7-7 7"}"/></svg>`;
+  let html = `<div style="padding:16px 0 20px">
+    <div style="display:flex;align-items:center;gap:8px">
+      <div class="chips" style="flex:1">
+        <button data-by="week" aria-pressed="${by === "week"}">Week</button>
+        <button data-by="month" aria-pressed="${by === "month"}">Month</button>
+      </div>
+      <button class="step" data-step="1" aria-label="Previous ${word}"${ui.back >= oldest ? " disabled" : ""}>${chev(-1)}</button>
+      <button class="step" data-step="-1" aria-label="Next ${word}"${ui.back === 0 ? " disabled" : ""}>${chev(1)}</button>
+    </div>
+    <div class="lab" style="margin-top:18px">Spent ${esc(periodPhrase(p))}</div>
+    <div class="fig" style="font-size:min(52px,${Math.min(13, 130 / fmt(spent).length).toFixed(1)}vw);font-weight:500;letter-spacing:-.03em;line-height:1;margin-top:8px">${esc(fmt(spent))}</div>
+    <div style="font-size:14px;color:var(--ink-2);margin-top:8px">${esc(line.join(" · "))}</div>
+    ${versus ? `<div style="font-size:13.5px;color:var(--ink-3);margin-top:2px">${esc(versus)}</div>` : ""}`;
+
+  /* The last few side by side, newest first. While the one being read is
+     among the latest six they stay put; past that, it heads the list, until
+     the list runs into your first record and stops. One row would only repeat
+     the headline, so it takes two. */
+  let top = ui.back < 6 ? 0 : ui.back;
+  if (top + 5 > oldest) top = Math.max(0, oldest - 5);
+  const hist = [];
+  for (let b = top; b <= Math.min(top + 5, oldest); b++) { const q = periodAt(by, b); hist.push({ b, q, total: spentIn(q) }); }
+  if (hist.length > 1) {
+    const peak = Math.max.apply(null, hist.map(h => h.total));
+    html += `<div style="margin-top:18px"><div class="sec"><span class="lab">${by === "week" ? "Week by week" : "Month by month"}</span></div>`;
+    html += hist.map(h => {
+      const on = h.b === ui.back;
+      const pct = peak > 0 ? h.total / peak * 100 : 0;
+      return `<button class="span-row" data-back="${h.b}" aria-current="${on}">
+        <span class="span-name">${esc(periodName(h.q))}</span>
+        <span class="gauge"><i class="${on ? "hatch-ink" : "hatch-mute"}" style="width:${pct}%"></i></span>
+        <span class="span-amt">${esc(fmt(h.total, { whole:true }))}</span>
+      </button>`;
+    }).join("");
+    html += `</div>`;
+  }
 
   /* Where it goes, by label */
   const groups = {};
-  state.tx.forEach(t => {
-    if (t.kind !== "expense" || monthOfISO(t.date) !== mk) return;
+  recs.forEach(t => {
+    if (t.kind !== "expense") return;
     const l = (t.label || t.note || "Unlabelled").trim() || "Unlabelled";
     const k = l.toLowerCase();
     if (!groups[k]) groups[k] = { label:l, total:0, count:0 };
@@ -1561,7 +1721,7 @@ function viewSpending(d){
   }
 
   /* What came in, and from where */
-  const inGroups = incomeBy(mk);
+  const inGroups = incomeBy(p);
   const inRanked = Object.keys(inGroups).map(k => inGroups[k]).sort((a, b) => b.total - a.total);
   const inTotal = round2(inRanked.reduce((a, g) => a + g.total, 0));
   if (inRanked.length) {
@@ -1578,18 +1738,35 @@ function viewSpending(d){
     html += `</div>`;
   }
 
-  html += `<div style="margin-top:18px">
-    <div class="sec"><span class="lab">Newest first</span>${!ui.seeAll && all.length > 40 ? `<button class="more" data-act="seeall">Show all ${all.length}</button>` : ""}</div>`;
-  if (!shown.length) html += `<div class="empty">Nothing recorded yet.</div>`;
-  else html += shown.map(t => `
-    <div class="lead" style="border-bottom:1px dashed var(--dash)">
-      <span class="when" style="width:46px">${esc(relDay(t.date))}</span>
-      <span class="what">${esc(txName(t))}${t.auto ? " ·" : ""}</span>
-      <span class="dots"></span>
-      <button class="undo" data-del-tx="${esc(t.id)}">Undo</button>
-      <span class="amt"${t.kind === "income" ? ' style="color:var(--pos)"' : ""}>${t.kind === "income" ? "+" : ""}${esc(fmt(t.amount))}</span>
-    </div>`).join("");
-  html += `</div></div>`;
+  /* Every record in the period, newest first, under a heading per day that
+     carries what the day cost. */
+  if (!recs.length) {
+    html += `<div class="empty" style="margin-top:18px;border-top:1px dashed var(--dash)">Nothing recorded ${esc(periodPhrase(p))}.</div>`;
+  } else {
+    const daySpent = {};
+    recs.forEach(t => { if (t.kind === "expense") daySpent[t.date] = round2((daySpent[t.date] || 0) + num(t.amount)); });
+    const shown = ui.seeAll ? recs : recs.slice(0, 40);
+    let day = null;
+    html += shown.map(t => {
+      let head = "";
+      if (t.date !== day) {
+        day = t.date;
+        head = `<div class="sec" style="margin-top:18px">
+          <span class="lab">${esc(dayName(t.date))}</span>
+          ${daySpent[t.date] ? `<span class="fig" style="font-size:16px">${esc(fmt(daySpent[t.date]))}</span>` : ""}</div>`;
+      }
+      return head + `<div class="lead" style="border-bottom:1px dashed var(--dash)">
+        <span class="what">${esc(txName(t))}${t.auto ? " ·" : ""}</span>
+        <span class="dots"></span>
+        <button class="undo" data-del-tx="${esc(t.id)}">Undo</button>
+        <span class="amt"${t.kind === "income" ? ' style="color:var(--pos)"' : ""}>${t.kind === "income" ? "+" : ""}${esc(fmt(t.amount))}</span>
+      </div>`;
+    }).join("");
+    if (shown.length < recs.length) {
+      html += `<button class="pill ghost" style="width:100%;margin-top:14px" data-act="seeall">Show all ${recs.length}</button>`;
+    }
+  }
+  html += `</div>`;
   return html;
 }
 
@@ -1769,7 +1946,7 @@ function sheetIncome(re){
         + (month.total > 0.005 ? " " + fmt(month.total) + " this month over " + month.days
             + " day" + (month.days === 1 ? "" : "s") + "." : "");
   } else if (named) {
-    const sofar = incomeBy(thisMonth())[named.toLowerCase()];
+    const sofar = incomeBy(periodAt("month", 0))[named.toLowerCase()];
     say = sofar
       ? named + " so far this month: " + fmt(sofar.total) + " over " + sofar.count + " time" + (sofar.count === 1 ? "" : "s") + "."
       : "Counted as " + named + ", and totalled on its own.";
@@ -2404,9 +2581,24 @@ document.addEventListener("click", e => {
   const hit = sel => e.target.closest(sel);
 
   const tab = hit("#tabs [data-tab]");
-  if (tab) { ui.tab = tab.dataset.tab; ui.seeAll = false; render(); return; }
+  if (tab) { ui.tab = tab.dataset.tab; ui.seeAll = false; ui.back = 0; render(); return; }
   const jump = hit("[data-tab-jump]");
-  if (jump) { ui.tab = jump.dataset.tabJump; render(); return; }
+  if (jump) { ui.tab = jump.dataset.tabJump; ui.seeAll = false; ui.back = 0; render(); return; }
+
+  /* Spending: a week or a month, and which one. Switching keeps your place —
+     from last week to Month opens the month that week ended in, not this one. */
+  const spanBy = hit("[data-by]");
+  if (spanBy) {
+    const was = periodAt(state.settings.spendBy, ui.back);
+    state.settings.spendBy = spanBy.dataset.by === "month" ? "month" : "week";
+    saveLocal();
+    ui.back = Math.max(0, periodsSince(state.settings.spendBy, was.to < todayISO() ? was.to : todayISO()));
+    ui.seeAll = false; render(); return;
+  }
+  const step = hit("[data-step]");
+  if (step) { if (!step.disabled) { ui.back += num(step.dataset.step); ui.seeAll = false; render(); } return; }
+  const spanRow = hit("[data-back]");
+  if (spanRow) { ui.back = num(spanRow.dataset.back); ui.seeAll = false; render(); return; }
 
   const key = hit("[data-key]");
   if (key) { padPress(key.dataset.key); return; }

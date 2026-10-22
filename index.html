@@ -559,7 +559,7 @@ function defaultState(){
       payday:null,          // "YYYY-MM-DD" of the next pay, or null
       payEvery:30,          // days between pays
       spendBy:"week",       // Spending reads a "week" or a "month" at a time
-      payLag:7,             // salary landing this many days into a month is the month before's pay
+      payLag:7,             // paid this many days late: see payMonthOf. 0 = paid in the month
       updatedAt: now
     },
     items: [],              // goal | bill | repeat | tips
@@ -572,6 +572,7 @@ function defaultState(){
 function mkItem(patch){
   return Object.assign({
     id: uid(), type:"goal", name:"Untitled", code:"", order:0, archived:false,
+    deletedOn:null,         // a goal money moved through is kept, hidden, from this date
     updatedAt: Date.now(),
     /* goal */ kind:"save", target:0, targetDate:null,
     /* bill */ amount:0, dueDay:null, cycleDays:null, cycleStart:null,
@@ -704,7 +705,8 @@ function migrate(data){
     cycleStart: /^\d{4}-\d{2}-\d{2}$/.test(c.cycleStart || "") ? c.cycleStart : null,
     days: Array.isArray(c.days) ? c.days.map(Number).filter(d => d >= 0 && d <= 6) : [],
     from: /^\d{4}-\d{2}-\d{2}$/.test(c.from || "") ? c.from : null,
-    archived: !!c.archived
+    archived: !!c.archived,
+    deletedOn: /^\d{4}-\d{2}-\d{2}$/.test(c.deletedOn || "") ? c.deletedOn : null
   }));
   s.items.forEach(i => { if (!i.code) i.code = codeFor(i.name, s.items); });
   return s;
@@ -966,9 +968,15 @@ function codeFor(name, all){
    of truth is the transaction log.
    ============================================================ */
 function derive(){
-  const items = state.items.filter(i => !i.archived).sort((a,b) => a.order - b.order);
+  const items = state.items.filter(i => !i.archived && !i.deletedOn).sort((a,b) => a.order - b.order);
+  /* A deleted savings goal holds nothing: its money came back the day it was
+     deleted, so its cuts are ignored, as if it had never been — including one
+     that syncs in late from a device that had not heard yet. A deleted debt
+     goal still counts, because what was paid stays paid. */
   const held = {};
-  state.items.forEach(i => { if (i.type === "goal" || i.type === "tips") held[i.id] = 0; });
+  state.items.forEach(i => {
+    if (i.type === "tips" || (i.type === "goal" && !(i.deletedOn && i.kind !== "debt"))) held[i.id] = 0;
+  });
 
   let cash = 0, cuts = 0;
   for (const t of state.tx) {
@@ -1280,12 +1288,17 @@ function mergeStates(local, remote){
   const txById = {};
   local.tx.concat(remote.tx).forEach(t => { if (t && t.id && !tombs[t.id]) txById[t.id] = t; });
 
-  const itemById = {};
+  const itemById = {}, deletedOn = {};
   local.items.concat(remote.items).forEach(i => {
     if (!i || !i.id || itemTombs[i.id]) return;
     const cur = itemById[i.id];
     if (!cur || num(i.updatedAt) > num(cur.updatedAt)) itemById[i.id] = i;
+    /* A deleted goal stays deleted: an edit on a device that had not heard
+       yet must not bring it back. The earliest date wins, so the answer is
+       the same whichever order the devices merge in. */
+    if (i.deletedOn && (!deletedOn[i.id] || i.deletedOn < deletedOn[i.id])) deletedOn[i.id] = i.deletedOn;
   });
+  Object.keys(deletedOn).forEach(id => { itemById[id] = Object.assign({}, itemById[id], { deletedOn: deletedOn[id] }); });
 
   const settings = num(remote.settings && remote.settings.updatedAt) > num(local.settings.updatedAt)
     ? Object.assign({}, local.settings, remote.settings)
@@ -1679,24 +1692,30 @@ function firstRecordISO(){
 function isSalary(t){ return t.kind === "income" && (t.label || "").trim().toLowerCase() === SALARY.toLowerCase(); }
 /** The month a salary is pay for. Paid a week late, the money landing on
     7 Oct is September's, so look back that far before reading the month —
-    and a week further, because pay due on a Saturday lands on the Monday,
-    and a pay that slips to the 9th is still September's, not October's. */
-const PAY_GRACE = 7;
+    and three days further, because pay due on a Saturday lands on the
+    Monday, and a pay that slips to the 9th is still September's. No more
+    than that: pay due on the 15th and paid early on the 13th is its own
+    month's. */
+const PAY_GRACE = 3;
 function payMonthOf(t){
   const lag = num(state.settings.payLag);
   return monthOfISO(addDays(t.date, -(lag ? lag + PAY_GRACE : 0)));
 }
 
 function monthStatement(p){
-  const kind = {};
-  state.items.forEach(i => { kind[i.id] = i.type === "tips" ? "jar" : i.type === "goal" ? (i.kind === "debt" ? "debt" : "save") : ""; });
+  const kind = {}, gone = {};
+  state.items.forEach(i => {
+    kind[i.id] = i.type === "tips" ? "jar" : i.type === "goal" ? (i.kind === "debt" ? "debt" : "save") : "";
+    gone[i.id] = i.deletedOn || "";
+  });
   let opening = 0, before = false, spent = 0, count = 0, inGoals = 0, inJar = 0;
   const income = [], debts = {};
   state.tx.forEach(t => {
     if (t.date > p.to) return;
     const amt = num(t.amount);
     const k = t.kind === "allocate" ? kind[t.itemId] || "" : "";
-    if (k === "save") inGoals += amt;
+    /* Savings in a goal since deleted were held until the day it went. */
+    if (k === "save") { if (!gone[t.itemId] || p.to < gone[t.itemId]) inGoals += amt; }
     else if (k === "jar") inJar += amt;
     if (t.date < p.from) {
       if (t.kind === "income") opening += amt;
@@ -2187,7 +2206,7 @@ function sheetIncome(re){
 function doIncome(){
   const amt = padValue();
   if (amt <= 0) return toast("Enter an amount above zero");
-  const from = state.items.find(i => i.id === ui.borrow && i.type === "goal" && i.kind === "debt");
+  const from = state.items.find(i => i.id === ui.borrow && i.type === "goal" && i.kind === "debt" && !i.archived && !i.deletedOn);
   const named = ui.src === WHO ? (val("#f-other") || ui.other || "").trim() : ui.src;
   if (!from && !named) return toast(ui.src === WHO ? "Say who it was from" : "Pick where it came from");
   const toJar = !from && named === TIPS;
@@ -2409,8 +2428,14 @@ function doSaveItem(id, type){
  *
  * For a savings goal it is — it goes back to your balance. For a debt goal it
  * is not: what it holds is what you already handed over, so giving it back
- * would invent money you no longer have. Those repayments become records of
- * money spent instead, which is what they were, and your balance does not move.
+ * would invent money you no longer have, and your balance does not move.
+ *
+ * A goal money has moved through is not erased but given a deletedOn date,
+ * which says both at once, with no entries written: derive() stops counting a
+ * deleted savings goal and keeps counting a deleted debt one, and past
+ * months' statements still know what each cut was. Writing a give-back entry
+ * instead goes wrong under sync — two devices deleting would give it back
+ * twice. A goal nothing has moved through is simply removed.
  */
 function deleteItem(id){
   const it = state.items.find(i => i.id === id);
@@ -2419,12 +2444,6 @@ function deleteItem(id){
   const saved = round2(d.held[id] || 0);
   const repaid = it.type === "goal" && it.kind === "debt" && saved > 0.005;
   const kindWord = it.type === "bill" ? "bill" : it.type === "repeat" ? "repeating charge" : "goal";
-  /* A goal money has moved through is put away rather than erased. Past
-     months still have to know a cut to it was a debt payment, or savings you
-     were holding, or their figures would change after the fact. Put away, it
-     is gone from every list but still counted: paid debt stays paid, and
-     money given back from savings is given back on the day. */
-  const keep = it.type === "goal" && state.tx.some(t => t.kind === "allocate" && t.itemId === id);
 
   confirmSheet("Delete " + it.name + "?",
     repaid
@@ -2433,17 +2452,17 @@ function deleteItem(id){
         ? "It holds " + fmt(saved) + ". That goes back into your balance. Spending you recorded stays."
         : "Spending you recorded stays. This only removes the " + kindWord + ".",
     "Delete", () => {
-      if (!repaid && saved > 0.005) {
-        addTx({ kind:"allocate", amount:-saved, itemId:id, date:todayISO(), note:"Returned from " + it.name });
-      }
-      if (keep) {
-        it.archived = true;
-        it.updatedAt = Date.now();
+      /* Read it all again: a sync may have landed while the sheet was open. */
+      const cur = state.items.find(i => i.id === id);
+      if (!cur || cur.deletedOn) return;
+      if (cur.type === "goal" && state.tx.some(t => t.kind === "allocate" && t.itemId === id)) {
+        cur.deletedOn = todayISO();
+        cur.updatedAt = Date.now();
       } else {
         state.items = state.items.filter(i => i.id !== id);
         state.itemTombstones[id] = Date.now();
       }
-      save(); render(); toast(it.name + " deleted");
+      save(); render(); toast(cur.name + " deleted");
     });
 }
 
@@ -2609,7 +2628,7 @@ function sheetSettings(){
       <div class="chips">${[[7, "Paid a week late"], [0, "Paid in the month"]].map(([v, l]) =>
         `<button data-paylag="${v}" aria-pressed="${state.settings.payLag === v}">${l}</button>`).join("")}</div>
       <input type="hidden" id="f-paylag" value="${esc(String(state.settings.payLag))}">
-      <div class="say">Paid a week late, money tagged “Salary” that lands in a month’s first two weeks is the month before’s pay — on 7 Oct it is September’s, and still is if it slips to the 9th. A month on Spending says so.</div></div>
+      <div class="say">Paid a week late, money tagged “Salary” that lands in a month’s first ten days is the month before’s pay — on 7 Oct it is September’s, and still is if it slips to the 9th. A month on Spending says so.</div></div>
 
     <button class="pill" style="width:100%;margin-top:18px" data-do="savesettings">Save</button>
 

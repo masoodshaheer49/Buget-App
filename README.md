@@ -303,10 +303,11 @@ unavailable and keeps everything on the device.
 - **Devices merge, they don't overwrite.** Record something on your phone on the
   bus and something else on the laptop at home, and you end up with both.
 - **Deleting really deletes.** Removals travel as tombstones. The one
-  exception is a goal money has moved through: it gets a `deletedOn` date
-  rather than being erased, so past months keep their figures — see below. A
-  deletion always wins a merge, at its earliest date, so a device that had
-  not heard yet cannot bring the goal back by editing it.
+  exception is a goal: it gets a `deletedOn` date rather than being erased,
+  so past months keep their figures — see below. A deletion always wins a
+  merge, at its earliest date, so a device that had not heard yet cannot
+  bring the goal back by editing it. A device still on an older build drops
+  the date, so the next device to hear from it pushes the date back.
 - **Theme and the sync switch stay per-device.**
 - **Erase everything erases everywhere** while sync is on.
 
@@ -381,8 +382,9 @@ A few things worth knowing if you change the code:
   totals the log before the month (what was carried in) and within it, in
   the same real-money terms as `onHand`, so the months chain without a stored
   balance. Allocations count only when their goal still exists, exactly as in
-  `derive()`. That is why deleting a goal with any allocations gives it a
-  `deletedOn` date instead of removing it: removed, its cuts would fall out
+  `derive()`. That is why deleting a goal gives it a `deletedOn` date
+  instead of removing it, even on a device that never saw money go through
+  it, since another device may have: removed, its cuts would fall out
   of every past month, and September's roll-over would change after the fact.
   The date does the rest without writing a single entry. A deleted debt goal
   keeps counting, because a paid debt stays paid. A deleted savings goal

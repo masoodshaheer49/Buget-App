@@ -542,7 +542,7 @@ const TABS = ["Home", "Goals", "Bills", "Spending"];
    ============================================================ */
 let state = null;
 let ui = { tab:"home", sheet:null, pad:"", label:"", other:"", borrow:"", src:"",
-           date:"", pick:false, goalIx:0, seeAll:false,
+           date:"", pick:false, goalId:"", seeAll:false,
            back:0 };             // Spending: how many weeks or months back you are reading
 let toastTimer = null;
 
@@ -1348,7 +1348,13 @@ function onRemote(snap){
   saveLocal();
   syncedAt = Date.now();
   setSyncState("on");
-  if (after !== before) { lastPushedSig = null; schedulePush(); }
+  /* A device on an older build does not know deletedOn and drops it from what
+     it pushes. Merging keeps it here, so nothing looks changed — but the
+     shared copy has lost it, so push it back. Only this, not "the payload
+     differs from the doc": records sit in a different order on each device,
+     and that test would never settle. */
+  const lacks = state.items.some(m => m.deletedOn && !incoming.items.some(i => i.id === m.id && i.deletedOn === m.deletedOn));
+  if (after !== before || lacks) { lastPushedSig = null; schedulePush(); }
   else lastPushedSig = after;
   render();
 }
@@ -2243,7 +2249,7 @@ function doRelease(){
 function sheetCut(re){
   ui.sheet = "cut";
   const d = derive();
-  const g = d.goals[ui.goalIx];
+  const g = d.goals.find(x => x.id === ui.goalId);
   if (!g) return closeSheet();
   const saved = d.held[g.id] || 0;
   const amt = padValue();
@@ -2272,9 +2278,9 @@ function sheetCut(re){
 }
 function doCut(){
   const d = derive();
-  const g = d.goals[ui.goalIx];
+  const g = d.goals.find(x => x.id === ui.goalId);
+  if (!g) { closeSheet(); return toast("That goal has been deleted"); }
   const amt = padValue();
-  if (!g) return closeSheet();
   if (amt <= 0) return toast("Enter an amount above zero");
   if (amt > d.left + 0.005) return toast("That is more than you have");
   addTx({ kind:"allocate", amount:amt, itemId:g.id, date:todayISO(), note:"Cut to " + g.name });
@@ -2286,7 +2292,7 @@ function doCut(){
 function sheetTake(re){
   ui.sheet = "take";
   const d = derive();
-  const g = d.goals[ui.goalIx];
+  const g = d.goals.find(x => x.id === ui.goalId);
   if (!g) return closeSheet();
   const saved = d.held[g.id] || 0;
   const amt = padValue();
@@ -2307,10 +2313,10 @@ function sheetTake(re){
 }
 function doTake(){
   const d = derive();
-  const g = d.goals[ui.goalIx];
+  const g = d.goals.find(x => x.id === ui.goalId);
+  if (!g) { closeSheet(); return toast("That goal has been deleted"); }
   const amt = padValue();
   const saved = d.held[g.id] || 0;
-  if (!g) return closeSheet();
   if (amt <= 0) return toast("Enter an amount above zero");
   if (amt > saved + 0.005) return toast(g.name + " only holds " + fmt(saved));
   addTx({ kind:"allocate", amount:-amt, itemId:g.id, date:todayISO(), note:"Taken back from " + g.name });
@@ -2435,7 +2441,9 @@ function doSaveItem(id, type){
  * deleted savings goal and keeps counting a deleted debt one, and past
  * months' statements still know what each cut was. Writing a give-back entry
  * instead goes wrong under sync — two devices deleting would give it back
- * twice. A goal nothing has moved through is simply removed.
+ * twice. Every goal gets the date, even one this device never saw money go
+ * through: another device may have, and a tombstone would throw that away.
+ * Bills and repeating charges hold no money, so they are simply removed.
  */
 function deleteItem(id){
   const it = state.items.find(i => i.id === id);
@@ -2455,7 +2463,7 @@ function deleteItem(id){
       /* Read it all again: a sync may have landed while the sheet was open. */
       const cur = state.items.find(i => i.id === id);
       if (!cur || cur.deletedOn) return;
-      if (cur.type === "goal" && state.tx.some(t => t.kind === "allocate" && t.itemId === id)) {
+      if (cur.type === "goal") {
         cur.deletedOn = todayISO();
         cur.updatedAt = Date.now();
       } else {
@@ -2896,9 +2904,9 @@ document.addEventListener("click", e => {
   if (payBill) { const [id, period] = payBill.dataset.payBill.split("|"); toggleBill(id, period); return; }
 
   const cut = hit("[data-cut]");
-  if (cut) { const d = derive(); ui.goalIx = d.goals.findIndex(g => g.id === cut.dataset.cut); ui.pad = ""; sheetCut(); return; }
+  if (cut) { ui.goalId = cut.dataset.cut; ui.pad = ""; sheetCut(); return; }
   const take = hit("[data-take]");
-  if (take) { const d = derive(); ui.goalIx = d.goals.findIndex(g => g.id === take.dataset.take); ui.pad = ""; sheetTake(); return; }
+  if (take) { ui.goalId = take.dataset.take; ui.pad = ""; sheetTake(); return; }
   const openGoal = hit("[data-open-goal]");
   if (openGoal) { ui.tab = "goals"; render(); return; }
 

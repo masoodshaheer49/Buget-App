@@ -290,6 +290,26 @@ input,select,textarea{font:inherit;color:inherit}
 .span-row[aria-current="true"] .span-name,
 .span-row[aria-current="true"] .span-amt{color:var(--ink)}
 
+/* A month start to finish: carried in, what came and went, and — under the
+   one solid rule, because this section sums — what rolls on. */
+.stmt-row{padding:10px 0;border-bottom:1px dashed var(--dash)}
+.stmt-row .lead{padding:0}
+.stmt-row .lead .what{max-width:none;flex:0 1 auto}   /* shorten only when it truly will not fit */
+.stmt-row > .lab-s{display:block;margin-top:3px}
+.stmt-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;padding:14px 0 6px;border-bottom:1px dashed var(--dash)}
+.stmt-head .fig{font-size:16px;color:var(--ink-2)}
+/* When the name and a long figure will not share a line — a small phone, a
+   seven-figure sum — the figure drops to its own line, still on the right. */
+.stmt-total{display:flex;flex-wrap:wrap;align-items:baseline;column-gap:10px;padding:12px 0 0;margin-top:-1px;border-top:1px solid var(--ink)}
+.stmt-total b{font-size:15.5px;font-weight:600;letter-spacing:-.01em;white-space:nowrap}
+.stmt-total .dots{flex:1 1 12px;border-bottom:1px dotted var(--dash);transform:translateY(-4px)}
+.stmt-total .fig{flex:none;margin-left:auto;font-size:22px;font-weight:500}
+.stmt-split{
+  display:flex;flex-wrap:wrap;gap:4px 14px;margin-top:8px;
+  font-family:var(--mono);font-weight:500;font-size:10.5px;letter-spacing:.08em;
+  text-transform:uppercase;color:var(--ink-3);
+}
+
 /* ============================================================
    Sheets — paper sliding up over the docket
    ============================================================ */
@@ -491,6 +511,7 @@ const DEFAULT_LABELS = ["Coffee", "Groceries", "Transport", "Takeaway", "Bills"]
    WHO is the sentinel for "someone gave it to me" — the name is typed. */
 const WHO = "~who";
 const TIPS = "Tips";                    // the one source held back in the jar
+const SALARY = "Salary";                // the one source that can be last month's pay
 const DEFAULT_INCOME = [TIPS, "Salary"];
 const OTHER = "Other";
 
@@ -522,6 +543,7 @@ function defaultState(){
       payday:null,          // "YYYY-MM-DD" of the next pay, or null
       payEvery:30,          // days between pays
       spendBy:"week",       // Spending reads a "week" or a "month" at a time
+      payLag:7,             // salary landing this many days into a month is the month before's pay
       updatedAt: now
     },
     items: [],              // goal | bill | repeat | tips
@@ -550,7 +572,7 @@ function freshState(){
   if (state) {
     state.tx.forEach(t => next.tombstones[t.id] = now);
     state.items.forEach(i => next.itemTombstones[i.id] = now);
-    ["currency","theme","name","sync","spendBy"].forEach(k => next.settings[k] = state.settings[k]);
+    ["currency","theme","name","sync","spendBy","payLag"].forEach(k => next.settings[k] = state.settings[k]);
   }
   return next;
 }
@@ -621,6 +643,7 @@ function migrate(data){
   s.settings.demo = !!s.settings.demo;
   s.settings.sync = s.settings.sync !== false;
   if (s.settings.spendBy !== "month") s.settings.spendBy = "week";
+  s.settings.payLag = clamp(Math.round(num(s.settings.payLag)), 0, 31);
   s.settings.updatedAt = num(s.settings.updatedAt);
   s.settings.payEvery = clamp(Math.round(num(s.settings.payEvery)) || 30, 1, 365);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(s.settings.payday || "")) s.settings.payday = null;
@@ -838,11 +861,13 @@ function rangeText(from, to, noYear){
   catch (e) { return a.toLocaleDateString(undefined, opts) + " – " + b.toLocaleDateString(undefined, opts); }
 }
 /** A period as it reads mid-sentence: "this week", "12 – 18 Oct", "in October". */
+/** "September", or "September 2025" when it is not this year. */
+function monthWord(mk){
+  const long = monthLabel(mk, true);
+  return mk.slice(0, 4) === thisMonth().slice(0, 4) ? long.split(" ")[0] : long;
+}
 function periodPhrase(p){
-  if (p.by === "month") {
-    const long = monthLabel(p.from.slice(0, 7), true);
-    return "in " + (p.from.slice(0, 4) === thisMonth().slice(0, 4) ? long.split(" ")[0] : long);
-  }
+  if (p.by === "month") return "in " + monthWord(p.from.slice(0, 7));
   return p.back === 0 ? "this week" : p.back === 1 ? "last week" : rangeText(p.from, p.to);
 }
 /** A period as a row names it: "This week", "28 Sep – 4 Oct", "October", "Dec 2025". */
@@ -970,13 +995,16 @@ function spentIn(p){
 }
 /** A period's money in, grouped by where it came from. Borrowed money is
     grouped under the goal it belongs to, so a wage and a loan never blur. */
+function incomeName(t){
+  return (t.label || "").trim()
+    || (t.note && /^Borrowed from /.test(t.note) ? t.note.replace(/^Borrowed from /, "Borrowed · ") : "")
+    || "Money in";
+}
 function incomeBy(p){
   const g = {};
   state.tx.forEach(t => {
     if (t.kind !== "income" || !inPeriod(t, p)) return;
-    const name = (t.label || "").trim()
-      || (t.note && /^Borrowed from /.test(t.note) ? t.note.replace(/^Borrowed from /, "Borrowed · ") : "")
-      || "Money in";
+    const name = incomeName(t);
     const k = name.toLowerCase();
     if (!g[k]) g[k] = { label:name, total:0, count:0 };
     g[k].total = round2(g[k].total + num(t.amount));
@@ -1621,6 +1649,146 @@ function firstRecordISO(){
   state.tx.forEach(t => { if ((t.kind === "expense" || t.kind === "income") && (!first || t.date < first)) first = t.date; });
   return first;
 }
+/* ---- a month, start to finish ----
+   What you had going in, what came and what went, and what rolls on into the
+   next month. Counted in real money — what Count my money expects you to be
+   holding — so a tip in the jar or a cut to a savings goal is still yours and
+   rolls over with the rest, while a cut to a debt goal is a payment and goes.
+   Each month's closing figure is the next month's opening one by construction:
+   both are the same sum over the log, split at a date. */
+function isSalary(t){ return t.kind === "income" && (t.label || "").trim().toLowerCase() === SALARY.toLowerCase(); }
+/** The month a salary is pay for. Paid a week late, the money landing on
+    7 Oct is September's, so look back that far before reading the month. */
+function payMonthOf(t){ return monthOfISO(addDays(t.date, -num(state.settings.payLag))); }
+
+function monthStatement(p){
+  const kind = {};
+  state.items.forEach(i => { kind[i.id] = i.type === "tips" ? "jar" : i.type === "goal" ? (i.kind === "debt" ? "debt" : "save") : ""; });
+  let opening = 0, before = false, spent = 0, count = 0, inGoals = 0, inJar = 0;
+  const income = [], debts = {};
+  state.tx.forEach(t => {
+    if (t.date > p.to) return;
+    const amt = num(t.amount);
+    const k = t.kind === "allocate" ? kind[t.itemId] || "" : "";
+    if (k === "save") inGoals += amt;
+    else if (k === "jar") inJar += amt;
+    if (t.date < p.from) {
+      if (t.kind === "income") opening += amt;
+      else if (t.kind === "expense") opening -= amt;
+      else if (k === "debt") opening -= amt;
+      if (t.kind === "income" || t.kind === "expense") before = true;
+      return;
+    }
+    if (t.kind === "income") income.push(t);
+    else if (t.kind === "expense") { spent += amt; count++; }
+    else if (k === "debt") debts[t.itemId] = (debts[t.itemId] || 0) + amt;
+  });
+
+  /* Money in by source, except salary: each pay is its own line, because
+     which month it was for is the thing worth saying about it. */
+  const groups = {}, lines = [];
+  income.sort(byDateDesc).forEach(t => {
+    if (isSalary(t)) { lines.push({ label: incomeName(t), total: num(t.amount), count: 1, pay: t }); return; }
+    const name = incomeName(t), key = name.toLowerCase();
+    if (!groups[key]) lines.push(groups[key] = { label: name, total: 0, count: 0 });
+    groups[key].total += num(t.amount);
+    groups[key].count++;
+  });
+  lines.forEach(l => l.total = round2(l.total));
+  lines.sort((a, b) => b.total - a.total);
+  const cameIn = round2(lines.reduce((a, l) => a + l.total, 0));
+
+  const paid = Object.keys(debts).map(id => ({ name: state.items.find(i => i.id === id).name, total: round2(debts[id]) }))
+    .filter(x => Math.abs(x.total) > 0.005);
+  const wentOut = round2(spent + paid.reduce((a, x) => a + x.total, 0));
+  opening = round2(opening);
+  const closing = round2(opening + cameIn - wentOut);
+  inGoals = round2(inGoals); inJar = round2(inJar);
+  return { opening, before, lines, cameIn, spent: round2(spent), count, paid, wentOut, closing,
+           inGoals, inJar, free: round2(closing - inGoals - inJar) };
+}
+
+/** What the month's own pay came to, and when it landed — which, paid a week
+    late, is in the next month's statement, not this one. */
+function payFor(mk){
+  const pays = state.tx.filter(t => isSalary(t) && payMonthOf(t) === mk).sort(byDateDesc);
+  if (pays.length) {
+    const total = round2(pays.reduce((a, t) => a + num(t.amount), 0));
+    return { total, landed: pays[0].date };
+  }
+  /* Not in yet. If an earlier pay is on record, expect this one the same day
+     of the month, as many months on as it is pay for. */
+  const last = state.tx.filter(isSalary).sort(byDateDesc)[0];
+  if (!last || payMonthOf(last) >= mk) return null;
+  const [ly, lm] = payMonthOf(last).split("-").map(Number), [y, m] = mk.split("-").map(Number);
+  const due = parseISO(last.date);
+  const day = due.getDate();
+  due.setDate(1);
+  due.setMonth(due.getMonth() + (y - ly) * 12 + (m - lm));
+  due.setDate(Math.min(day, new Date(due.getFullYear(), due.getMonth() + 1, 0).getDate()));
+  return { total: 0, due: isoOf(due) };
+}
+
+function statementHTML(p){
+  const s = monthStatement(p);
+  const mk = p.from.slice(0, 7), name = monthWord(mk), now = p.back === 0;
+  const short = iso => parseISO(iso).toLocaleDateString(undefined, { day:"numeric", month:"short" });
+  const signed = v => (v > 0.005 ? "+" : "") + fmt(v);
+  const row = (label, value, opts) => {
+    const o = opts || {};
+    const tone = o.tone || (value > 0.005 && o.signed ? "var(--pos)" : value < -0.005 && !o.signed ? "var(--neg)" : "");
+    return `<div class="stmt-row">
+      <div class="lead">
+        <span class="what">${esc(label)}</span>
+        <span class="dots"></span>
+        ${o.count > 1 ? `<span class="lab-s" style="letter-spacing:.1em">${o.count}&times;</span>` : ""}
+        <span class="amt"${tone ? ` style="color:${tone}"` : ""}>${esc(o.signed ? signed(value) : fmt(value))}</span>
+      </div>
+      ${o.sub ? `<span class="lab-s">${esc(o.sub)}</span>` : ""}
+    </div>`;
+  };
+
+  let html = `<div style="margin-top:18px"><div class="sec"><span class="lab">${esc(name + (now ? " so far" : ", start to finish"))}</span></div>`;
+  if (s.before) html += row("Carried in from " + monthWord(shiftMonth(mk, -1)), s.opening);
+
+  html += `<div class="stmt-head"><span class="lab">Came in</span><span class="fig">${esc(fmt(s.cameIn))}</span></div>`;
+  if (!s.lines.length) html += `<div class="say" style="padding:8px 0 10px">Nothing came in ${esc(now ? "yet" : "this month")}.</div>`;
+  html += s.lines.map(l => {
+    if (!l.pay) return row(l.label, l.total, { signed: true, count: l.count });
+    const forMk = payMonthOf(l.pay);
+    return row(l.label, l.total, { signed: true,
+      sub: (forMk === mk ? name : monthWord(forMk)) + "’s pay · came " + short(l.pay.date) });
+  }).join("");
+
+  html += `<div class="stmt-head"><span class="lab">Went out</span><span class="fig">${esc(fmt(s.wentOut))}</span></div>`;
+  html += row("Spent", -s.spent, { signed: true, count: s.count });
+  html += s.paid.map(x => row("Paid off " + x.name, -x.total, { signed: true })).join("");
+
+  const next = monthWord(shiftMonth(mk, 1));
+  html += `<div class="stmt-total">
+      <b>${esc(now ? "Into " + next + ", so far" : "Rolls into " + next)}</b>
+      <span class="dots"></span>
+      <span class="fig"${s.closing < -0.005 ? ' style="color:var(--neg)"' : ""}>${esc(fmt(s.closing))}</span>
+    </div>`;
+  /* Not all of it is yours to spend: say where the rest is sitting. */
+  if (Math.abs(s.inGoals) > 0.005 || Math.abs(s.inJar) > 0.005) {
+    const parts = [["Free to spend", s.free]];
+    if (Math.abs(s.inGoals) > 0.005) parts.push(["In goals", s.inGoals]);
+    if (Math.abs(s.inJar) > 0.005) parts.push(["In the tip jar", s.inJar]);
+    html += `<div class="stmt-split">${parts.map(([l, v]) =>
+      `<span${v < -0.005 ? ' style="color:var(--neg)"' : ""}>${esc(l)} ${esc(fmt(v))}</span>`).join("")}</div>`;
+  }
+
+  const pay = payFor(mk);
+  if (pay && pay.total > 0.005 && monthOfISO(pay.landed) !== mk) {
+    html += `<div class="say">${esc(name)}’s pay, ${esc(fmt(pay.total))}, came in on ${esc(short(pay.landed))}.</div>`;
+  } else if (pay && pay.due) {
+    html += `<div class="say">${esc(name)}’s pay is not in yet. Expect it about ${esc(short(pay.due))}.</div>`;
+  }
+  html += `</div>`;
+  return html;
+}
+
 function viewSpending(d){
   const by = state.settings.spendBy;
   const first = firstRecordISO();
@@ -1668,6 +1836,9 @@ function viewSpending(d){
     <div class="fig" style="font-size:min(52px,${Math.min(13, 130 / fmt(spent).length).toFixed(1)}vw);font-weight:500;letter-spacing:-.03em;line-height:1;margin-top:8px">${esc(fmt(spent))}</div>
     <div style="font-size:14px;color:var(--ink-2);margin-top:8px">${esc(line.join(" · "))}</div>
     ${versus ? `<div style="font-size:13.5px;color:var(--ink-3);margin-top:2px">${esc(versus)}</div>` : ""}`;
+
+  /* A month reads start to finish: what came in, what went, what rolls on. */
+  if (by === "month") html += statementHTML(p);
 
   /* The last few side by side, newest first. While the one being read is
      among the latest six they stay put; past that, it heads the list, until
@@ -1720,8 +1891,8 @@ function viewSpending(d){
     html += `</div>`;
   }
 
-  /* What came in, and from where */
-  const inGroups = incomeBy(p);
+  /* What came in, and from where — a month's statement already says. */
+  const inGroups = by === "week" ? incomeBy(p) : {};
   const inRanked = Object.keys(inGroups).map(k => inGroups[k]).sort((a, b) => b.total - a.total);
   const inTotal = round2(inRanked.reduce((a, g) => a + g.total, 0));
   if (inRanked.length) {
@@ -2395,6 +2566,12 @@ function sheetSettings(){
       <input class="input" id="f-income" value="${esc(state.settings.income.join(", "))}" placeholder="Tips, Salary">
       <div class="say">Tag money in and Spending totals each one on its own. “Tips” is the one held back in the tip jar — rename it and new tips land in your balance like anything else.</div></div>
 
+    <div class="field"><label class="lab">Salary</label>
+      <div class="chips">${[[7, "Paid a week late"], [0, "Paid in the month"]].map(([v, l]) =>
+        `<button data-paylag="${v}" aria-pressed="${state.settings.payLag === v}">${l}</button>`).join("")}</div>
+      <input type="hidden" id="f-paylag" value="${esc(String(state.settings.payLag))}">
+      <div class="say">Paid a week late, money tagged “Salary” that lands in a month’s first week is the month before’s pay — on 7 Oct it is September’s. A month on Spending says so.</div></div>
+
     <button class="pill" style="width:100%;margin-top:18px" data-do="savesettings">Save</button>
 
     <div class="lab" style="margin-top:26px;padding-bottom:9px;border-bottom:1px dashed var(--dash)">Repeating charges</div>
@@ -2425,6 +2602,7 @@ function doSaveSettings(){
   s.payEvery = clamp(Math.round(parseAmount(val("#f-payevery"))) || 30, 1, 365);
   s.currency = CURRENCIES.some(c => c.code === val("#f-currency")) ? val("#f-currency") : "EUR";
   s.theme = ["auto","light","dark"].indexOf(val("#f-themeval")) >= 0 ? val("#f-themeval") : "auto";
+  s.payLag = clamp(Math.round(num(val("#f-paylag"))), 0, 31);
   const seen = {};
   s.labels = (val("#f-labels") || "").split(",").map(x => x.trim())
     .filter(x => x && x !== OTHER && !seen[x.toLowerCase()] && (seen[x.toLowerCase()] = true)).slice(0, 12);
@@ -2639,6 +2817,12 @@ document.addEventListener("click", e => {
     day.setAttribute("aria-pressed", on);
     const picked = [...sheetEl().querySelectorAll("[data-day][aria-pressed='true']")].map(b => b.dataset.day);
     sheetEl().querySelector("#f-days").value = picked.join(",");
+    return;
+  }
+  const paylag = hit("[data-paylag]");
+  if (paylag) {
+    sheetEl().querySelector("#f-paylag").value = paylag.dataset.paylag;
+    sheetEl().querySelectorAll("[data-paylag]").forEach(b => b.setAttribute("aria-pressed", b === paylag));
     return;
   }
   const themeopt = hit("[data-themeopt]");

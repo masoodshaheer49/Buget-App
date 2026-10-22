@@ -200,6 +200,47 @@ The daily rate counts only days that have happened, and none from before your
 first record. A month you started on the 20th is not 31 days of data. Weeks
 start on Monday; set `WEEK_STARTS` to `0` in `index.html` for Sunday.
 
+### A month, start to finish
+
+Read by the month, Spending also says where the month's money came from, where
+it went, and what is left over to roll into the next one:
+
+```
+  SEPTEMBER, START TO FINISH
+  Carried in from August ·············· €1,480.84
+  CAME IN                                €1,603.30
+  Salary ······························ +€1,500.00
+    AUGUST'S PAY · CAME 7 SEP
+  Borrowed · Owes sister ················· +€80.00
+  Tips ································ 2× +€23.30
+  WENT OUT                                 €362.80
+  Spent ······························ 24× −€262.80
+  Paid off Owes sister ·················· −€100.00
+  ────────────────────────────────────────────────
+  Rolls into October ·················· €2,721.34
+  FREE TO SPEND €2,057.24 · IN GOALS €650.00 · IN THE TIP JAR €14.10
+
+  September's pay, €1,620.00, came in on 7 Oct.
+```
+
+It is counted in **real money**: what Count my money expects you to be holding.
+Coins in the tip jar and money cut to a savings goal are still yours, so they
+roll over with the rest. The line under the total says how much of it is
+actually free to spend. Money cut to a debt goal is a payment, so it is a line
+under *Went out*. That is why one month's *Rolls into* is always the next
+month's *Carried in*, and the month you are in comes to exactly what Count my
+money expects today.
+
+**Salary paid a week late.** If you are paid for a month a week after it ends,
+the money landing on 7 October is September's pay. Settings → *Salary* →
+**Paid a week late** (the default) reads it that way. Money tagged **Salary**
+that lands in the first week of a month is shown, in that month, as the month
+before's pay. The month it was earned for then closes with a line saying when
+its pay came in. The money is still counted in the month it actually arrived,
+because that is when you could spend it. Until a month's pay arrives, the line
+says when to expect it: the same day of the month as the last one. **Paid in
+the month** turns this off.
+
 ### Payday, or not
 
 Set a payday in Settings and Home counts down to it: *"12 days to payday ·
@@ -326,6 +367,12 @@ copy of the app to maintain.
 
 A few things worth knowing if you change the code:
 
+- **A month's statement is two sums split at a date.** `monthStatement()`
+  totals the log before the month (what was carried in) and within it, in
+  the same real-money terms as `onHand`, so the months chain without a stored
+  balance. Allocations count only when their goal still exists, exactly as in
+  `derive()` — deleting a debt goal books what was paid as spending on the
+  day, so the money leaves in that month instead.
 - **A week or a month is a pair of dates.** `periodAt(by, back)` returns the
   inclusive `from`/`to` ISO dates of the period `back` steps behind this one,
   and every Spending figure is filtered by `inPeriod()` — two string

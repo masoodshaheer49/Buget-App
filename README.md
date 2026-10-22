@@ -234,12 +234,17 @@ money expects today.
 **Salary paid a week late.** If you are paid for a month a week after it ends,
 the money landing on 7 October is September's pay. Settings → *Salary* →
 **Paid a week late** (the default) reads it that way. Money tagged **Salary**
-that lands in the first week of a month is shown, in that month, as the month
-before's pay. The month it was earned for then closes with a line saying when
-its pay came in. The money is still counted in the month it actually arrived,
-because that is when you could spend it. Until a month's pay arrives, the line
-says when to expect it: the same day of the month as the last one. **Paid in
-the month** turns this off.
+that lands in the first two weeks of a month is shown, in that month, as the
+month before's pay. Two weeks, not one, because a pay due on a Saturday lands
+on the Monday, and the 9th is still last month's pay. The month it was earned
+for then closes with a line saying when its pay came in. The money is still
+counted in the month it actually arrived, because that is when you could
+spend it. Until a month's pay arrives, the line says when to expect it: the
+same day of the month as the last one, and says so if that day has passed
+with nothing recorded. **Paid in the month** turns this off.
+
+Taking money back from a debt goal is money coming back, so it is listed under
+*Came in* as **Taken back from** the goal.
 
 ### Payday, or not
 
@@ -296,7 +301,10 @@ unavailable and keeps everything on the device.
   signal and catches up when it reconnects.
 - **Devices merge, they don't overwrite.** Record something on your phone on the
   bus and something else on the laptop at home, and you end up with both.
-- **Deleting really deletes.** Removals travel as tombstones.
+- **Deleting really deletes.** Removals travel as tombstones. The one
+  exception is a goal money has moved through: it is put away (`archived`)
+  rather than erased, gone from every list but still counted, so past months
+  keep their figures — see below.
 - **Theme and the sync switch stay per-device.**
 - **Erase everything erases everywhere** while sync is on.
 
@@ -371,8 +379,10 @@ A few things worth knowing if you change the code:
   totals the log before the month (what was carried in) and within it, in
   the same real-money terms as `onHand`, so the months chain without a stored
   balance. Allocations count only when their goal still exists, exactly as in
-  `derive()` — deleting a debt goal books what was paid as spending on the
-  day, so the money leaves in that month instead.
+  `derive()`. That is why deleting a goal with any allocations archives it
+  instead of removing it: removed, its cuts would fall out of every past
+  month, and September's roll-over would change after the fact. Archived, a
+  paid debt stays paid and a savings goal gives its money back on the day.
 - **A week or a month is a pair of dates.** `periodAt(by, back)` returns the
   inclusive `from`/`to` ISO dates of the period `back` steps behind this one,
   and every Spending figure is filtered by `inPeriod()` — two string

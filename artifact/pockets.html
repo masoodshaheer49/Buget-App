@@ -294,7 +294,7 @@ input,select,textarea{font:inherit;color:inherit}
    one solid rule, because this section sums — what rolls on. */
 .stmt-row{padding:10px 0;border-bottom:1px dashed var(--dash)}
 .stmt-row .lead{padding:0}
-.stmt-row .lead .what{max-width:none;flex:0 1 auto}   /* shorten only when it truly will not fit */
+.stmt-row .lead .what{max-width:none;flex:0 1 auto;white-space:normal}   /* wraps on a small phone rather than losing the month */
 .stmt-row > .lab-s{display:block;margin-top:3px}
 .stmt-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;padding:14px 0 6px;border-bottom:1px dashed var(--dash)}
 .stmt-head .fig{font-size:16px;color:var(--ink-2)}
@@ -861,10 +861,14 @@ function rangeText(from, to, noYear){
   catch (e) { return a.toLocaleDateString(undefined, opts) + " – " + b.toLocaleDateString(undefined, opts); }
 }
 /** A period as it reads mid-sentence: "this week", "12 – 18 Oct", "in October". */
-/** "September", or "September 2025" when it is not this year. */
+/** "September", or "September 2025" when it is not this year. The month is
+    asked for on its own: some languages put the year first. */
+function monthOnly(mk){
+  const [y, m] = mk.split("-").map(Number);
+  return new Date(y, m - 1, 1).toLocaleDateString(undefined, { month:"long" });
+}
 function monthWord(mk){
-  const long = monthLabel(mk, true);
-  return mk.slice(0, 4) === thisMonth().slice(0, 4) ? long.split(" ")[0] : long;
+  return mk.slice(0, 4) === thisMonth().slice(0, 4) ? monthOnly(mk) : monthLabel(mk, true);
 }
 function periodPhrase(p){
   if (p.by === "month") return "in " + monthWord(p.from.slice(0, 7));
@@ -874,7 +878,7 @@ function periodPhrase(p){
 function periodName(p){
   if (p.by === "month") {
     const mk = p.from.slice(0, 7);
-    return mk.slice(0, 4) === thisMonth().slice(0, 4) ? monthLabel(mk, true).split(" ")[0] : monthLabel(mk);
+    return mk.slice(0, 4) === thisMonth().slice(0, 4) ? monthOnly(mk) : monthLabel(mk);
   }
   return p.back === 0 ? "This week" : p.back === 1 ? "Last week" : rangeText(p.from, p.to, true);
 }
@@ -1658,8 +1662,14 @@ function firstRecordISO(){
    both are the same sum over the log, split at a date. */
 function isSalary(t){ return t.kind === "income" && (t.label || "").trim().toLowerCase() === SALARY.toLowerCase(); }
 /** The month a salary is pay for. Paid a week late, the money landing on
-    7 Oct is September's, so look back that far before reading the month. */
-function payMonthOf(t){ return monthOfISO(addDays(t.date, -num(state.settings.payLag))); }
+    7 Oct is September's, so look back that far before reading the month —
+    and a week further, because pay due on a Saturday lands on the Monday,
+    and a pay that slips to the 9th is still September's, not October's. */
+const PAY_GRACE = 7;
+function payMonthOf(t){
+  const lag = num(state.settings.payLag);
+  return monthOfISO(addDays(t.date, -(lag ? lag + PAY_GRACE : 0)));
+}
 
 function monthStatement(p){
   const kind = {};
@@ -1676,7 +1686,7 @@ function monthStatement(p){
       if (t.kind === "income") opening += amt;
       else if (t.kind === "expense") opening -= amt;
       else if (k === "debt") opening -= amt;
-      if (t.kind === "income" || t.kind === "expense") before = true;
+      if (t.kind === "income" || t.kind === "expense" || k === "debt") before = true;
       return;
     }
     if (t.kind === "income") income.push(t);
@@ -1685,8 +1695,14 @@ function monthStatement(p){
   });
 
   /* Money in by source, except salary: each pay is its own line, because
-     which month it was for is the thing worth saying about it. */
-  const groups = {}, lines = [];
+     which month it was for is the thing worth saying about it. A month that
+     took more back from a debt than it paid in has had money come back. */
+  const groups = {}, lines = [], paid = [];
+  Object.keys(debts).forEach(id => {
+    const name = state.items.find(i => i.id === id).name, total = round2(debts[id]);
+    if (total > 0.005) paid.push({ name, total });
+    else if (total < -0.005) lines.push({ label: "Taken back from " + name, total: -total, count: 1 });
+  });
   income.sort(byDateDesc).forEach(t => {
     if (isSalary(t)) { lines.push({ label: incomeName(t), total: num(t.amount), count: 1, pay: t }); return; }
     const name = incomeName(t), key = name.toLowerCase();
@@ -1698,8 +1714,6 @@ function monthStatement(p){
   lines.sort((a, b) => b.total - a.total);
   const cameIn = round2(lines.reduce((a, l) => a + l.total, 0));
 
-  const paid = Object.keys(debts).map(id => ({ name: state.items.find(i => i.id === id).name, total: round2(debts[id]) }))
-    .filter(x => Math.abs(x.total) > 0.005);
   const wentOut = round2(spent + paid.reduce((a, x) => a + x.total, 0));
   opening = round2(opening);
   const closing = round2(opening + cameIn - wentOut);
@@ -1708,25 +1722,24 @@ function monthStatement(p){
            inGoals, inJar, free: round2(closing - inGoals - inJar) };
 }
 
-/** What the month's own pay came to, and when it landed — which, paid a week
-    late, is in the next month's statement, not this one. */
+/** The month's own pay that landed after it — paid a week late, that is in
+    the next month's statement, not this one. Pay that landed inside the month
+    is already among what came in, so it is left out here. */
 function payFor(mk){
-  const pays = state.tx.filter(t => isSalary(t) && payMonthOf(t) === mk).sort(byDateDesc);
-  if (pays.length) {
-    const total = round2(pays.reduce((a, t) => a + num(t.amount), 0));
-    return { total, landed: pays[0].date };
-  }
-  /* Not in yet. If an earlier pay is on record, expect this one the same day
-     of the month, as many months on as it is pay for. */
+  const pays = state.tx.filter(t => isSalary(t) && payMonthOf(t) === mk);
+  const late = pays.filter(t => monthOfISO(t.date) !== mk).sort(byDateDesc);
+  if (late.length) return { total: round2(late.reduce((a, t) => a + num(t.amount), 0)), landed: late[0].date };
+  if (pays.length) return null;
+  /* Not in yet. Only the pay right after the last one on record is expected,
+     on the same day of the following month — not every month after a job
+     ends, or after the source is renamed. */
   const last = state.tx.filter(isSalary).sort(byDateDesc)[0];
-  if (!last || payMonthOf(last) >= mk) return null;
-  const [ly, lm] = payMonthOf(last).split("-").map(Number), [y, m] = mk.split("-").map(Number);
-  const due = parseISO(last.date);
-  const day = due.getDate();
+  if (!last || payMonthOf(last) !== shiftMonth(mk, -1)) return null;
+  const due = parseISO(last.date), day = due.getDate();
   due.setDate(1);
-  due.setMonth(due.getMonth() + (y - ly) * 12 + (m - lm));
+  due.setMonth(due.getMonth() + 1);
   due.setDate(Math.min(day, new Date(due.getFullYear(), due.getMonth() + 1, 0).getDate()));
-  return { total: 0, due: isoOf(due) };
+  return { due: isoOf(due) };
 }
 
 function statementHTML(p){
@@ -1780,10 +1793,12 @@ function statementHTML(p){
   }
 
   const pay = payFor(mk);
-  if (pay && pay.total > 0.005 && monthOfISO(pay.landed) !== mk) {
+  if (pay && pay.landed) {
     html += `<div class="say">${esc(name)}’s pay, ${esc(fmt(pay.total))}, came in on ${esc(short(pay.landed))}.</div>`;
   } else if (pay && pay.due) {
-    html += `<div class="say">${esc(name)}’s pay is not in yet. Expect it about ${esc(short(pay.due))}.</div>`;
+    html += `<div class="say">${esc(name)}’s pay ${esc(pay.due < todayISO()
+      ? "was due about " + short(pay.due) + " and is not recorded yet."
+      : "is not in yet. Expect it about " + short(pay.due) + ".")}</div>`;
   }
   html += `</div>`;
   return html;
@@ -2388,22 +2403,30 @@ function deleteItem(id){
   const saved = round2(d.held[id] || 0);
   const repaid = it.type === "goal" && it.kind === "debt" && saved > 0.005;
   const kindWord = it.type === "bill" ? "bill" : it.type === "repeat" ? "repeating charge" : "goal";
+  /* A goal money has moved through is put away rather than erased. Past
+     months still have to know a cut to it was a debt payment, or savings you
+     were holding, or their figures would change after the fact. Put away, it
+     is gone from every list but still counted: paid debt stays paid, and
+     money given back from savings is given back on the day. */
+  const keep = it.type === "goal" && state.tx.some(t => t.kind === "allocate" && t.itemId === id);
 
   confirmSheet("Delete " + it.name + "?",
     repaid
-      ? "You have paid " + fmt(saved) + " of this. That money is gone, so it stays gone — it goes into your records as money spent, and your balance does not change."
+      ? "You have paid " + fmt(saved) + " of this. That money is gone, so it stays gone — your balance does not change."
       : saved > 0.005
         ? "It holds " + fmt(saved) + ". That goes back into your balance. Spending you recorded stays."
         : "Spending you recorded stays. This only removes the " + kindWord + ".",
     "Delete", () => {
-      if (repaid) {
-        addTx({ kind:"expense", amount:saved, label:it.name, date:todayISO(), note:"Paid " + it.name });
-        addTx({ kind:"allocate", amount:-saved, itemId:id, date:todayISO(), note:"Settled " + it.name });
-      } else if (saved > 0.005) {
+      if (!repaid && saved > 0.005) {
         addTx({ kind:"allocate", amount:-saved, itemId:id, date:todayISO(), note:"Returned from " + it.name });
       }
-      state.items = state.items.filter(i => i.id !== id);
-      state.itemTombstones[id] = Date.now();
+      if (keep) {
+        it.archived = true;
+        it.updatedAt = Date.now();
+      } else {
+        state.items = state.items.filter(i => i.id !== id);
+        state.itemTombstones[id] = Date.now();
+      }
       save(); render(); toast(it.name + " deleted");
     });
 }
@@ -2570,7 +2593,7 @@ function sheetSettings(){
       <div class="chips">${[[7, "Paid a week late"], [0, "Paid in the month"]].map(([v, l]) =>
         `<button data-paylag="${v}" aria-pressed="${state.settings.payLag === v}">${l}</button>`).join("")}</div>
       <input type="hidden" id="f-paylag" value="${esc(String(state.settings.payLag))}">
-      <div class="say">Paid a week late, money tagged “Salary” that lands in a month’s first week is the month before’s pay — on 7 Oct it is September’s. A month on Spending says so.</div></div>
+      <div class="say">Paid a week late, money tagged “Salary” that lands in a month’s first two weeks is the month before’s pay — on 7 Oct it is September’s, and still is if it slips to the 9th. A month on Spending says so.</div></div>
 
     <button class="pill" style="width:100%;margin-top:18px" data-do="savesettings">Save</button>
 

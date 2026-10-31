@@ -78,6 +78,13 @@ A goal is a pot you cut money to. Two kinds:
 A goal holds nothing until you cut money to it. That is the whole model — there
 are no envelopes to keep topped up.
 
+**Deleting a savings goal that holds money asks whether you spent it.** Saved
+up and then paid out — a deposit, a fee, the IRP — the money has left your
+account: **Spent it** records it as spending on the day you paid, and Money
+left does not move, because it was set aside already. **Not spent** puts it
+back into Money left. If you already recorded the payment as spending, choose
+*Not spent*, or it would be counted twice.
+
 Cutting takes the money out of **Money left** the moment you do it, which is the
 point: it is no longer yours to spend. It does not take it out of your bank,
 though — a savings goal is a decision, not a transfer. So **Count my money**
@@ -149,6 +156,11 @@ holding with it.
 Only the source named exactly **Tips** is held back. Rename it in Settings and
 money tagged with the new name lands in your balance like anything else.
 
+**Tips are cash kept apart, not money.** So Spending leaves them out: a week's
+*Money in*, and a month's statement — what came in, and what rolls over. The
+jar's own docket is where tips are counted. Only a release turns them into
+money, and the month you release shows it under *Came in*.
+
 Both recording sheets carry a **When** row — Today, Yesterday, or a picker —
 because money rarely lands on the day you get round to typing it. Tips come the
 next morning; a receipt surfaces in a pocket a week later. The date cannot be in
@@ -191,7 +203,8 @@ and *Week* from a month opens its last week. Which of the two you read by is
 remembered on this device and is not synced.
 
 Everything below follows the period you are reading: where it went by label,
-what came in by source, and **every** record in it — in and out — under a
+what came in by source (apart from tips, which sit in the jar), and **every**
+record in it — in and out — under a
 heading per day carrying what that day cost, with an **Undo** beside each.
 Money in is shown in green with a `+`, because an entry you cannot see is an
 entry you cannot correct.
@@ -206,30 +219,32 @@ Read by the month, Spending also says where the month's money came from, where
 it went, and what is left over to roll into the next one:
 
 ```
-  SEPTEMBER, START TO FINISH
-  Carried in from August ·············· €1,480.84
-  CAME IN                                €1,603.30
-  Salary ······························ +€1,500.00
-    AUGUST'S PAY · CAME 7 SEP
-  Borrowed · Owes sister ················· +€80.00
-  Tips ································ 2× +€23.30
-  WENT OUT                                 €362.80
-  Spent ······························ 24× −€262.80
-  Paid off Owes sister ·················· −€100.00
+  OCTOBER SO FAR
+  Carried in from September ··········· €1,421.70
+  CAME IN                                €1,370.80
+  Salary ··························· 5× +€1,320.80
+     3 OCT   September's pay ················ €7.50
+     4 OCT   September's pay ·············· €459.00
+    11 OCT   October's pay ················ €321.00
+    19 OCT   October's pay ················ €305.55
+    25 OCT   October's pay ················ €227.75
+  Dad ···································· +€50.00
+  WENT OUT                                 €383.00
+  Spent ······························ 31× −€383.00
   ────────────────────────────────────────────────
-  Rolls into October ·················· €2,721.34
-  FREE TO SPEND €2,057.24 · IN GOALS €650.00 · IN THE TIP JAR €14.10
-
-  September's pay, €1,620.00, came in on 7 Oct.
+  Into November, so far ··············· €2,409.50
+  FREE TO SPEND €2,009.50 · IN GOALS €400.00
 ```
 
-It is counted in **real money**: what Count my money expects you to be holding.
-Coins in the tip jar and money cut to a savings goal are still yours, so they
-roll over with the rest. The line under the total says how much of it is
-actually free to spend. Money cut to a debt goal is a payment, so it is a line
-under *Went out*. That is why one month's *Rolls into* is always the next
-month's *Carried in*, and the month you are in comes to exactly what Count my
-money expects today.
+Salary comes first, as one line, with every pay under it in date order and
+which month each was for. Then everything else by source.
+
+It counts **your money**, and tips are not part of it: they are cash kept apart
+in the jar (see *The tip jar*). Money cut to a savings goal is still yours, so
+it rolls over with the rest. The line under the total says how much of it is
+actually free to spend, which is Money left. Money cut to a debt goal is a
+payment, so it is a line under *Went out*. That is why one month's *Rolls into*
+is always the next month's *Carried in*.
 
 **Salary paid a week late.** If you are paid for a month a week after it ends,
 the money landing on 7 October is September's pay. Settings → *Salary* →
@@ -379,9 +394,11 @@ copy of the app to maintain.
 A few things worth knowing if you change the code:
 
 - **A month's statement is two sums split at a date.** `monthStatement()`
-  totals the log before the month (what was carried in) and within it, in
-  the same real-money terms as `onHand`, so the months chain without a stored
-  balance. Allocations count only when their goal still exists, exactly as in
+  totals the log before the month (what was carried in) and within it, as
+  Money left plus savings goals (`left + goalSaved`), so the months chain
+  without a stored balance. The tip jar is left out by counting its net —
+  jar tips in, minus allocations to the jar — which is zero for a tip and its
+  holding, and exactly the release when tips are let out. Allocations count only when their goal still exists, exactly as in
   `derive()`. That is why deleting a goal gives it a `deletedOn` date
   instead of removing it, even on a device that never saw money go through
   it, since another device may have: removed, its cuts would fall out

@@ -153,12 +153,28 @@ money the days actually gave you, kept whole until the month is done instead of
 disappearing into a coffee. Undo works on any line, and undoing a tip takes its
 holding with it.
 
+**Spend some from the jar** pays for one thing out of the tips, not out of your
+money. Type the amount and what it was for, and the jar drops by that much.
+Money left does not move, because the money never passed through it:
+
+```
+  Today   GTA 6                       Undo      −€100.00
+```
+
+The spend is listed in the jar's docket, with an Undo that puts the money back
+in the jar. It is also listed on Spending as *GTA 6 · from tips*. Like a tip it
+is not counted there, not in a week's spending, a day's total, the month's
+statement, or how long your money lasts, because it was tips and not money.
+The sheet will not take more than the jar holds. A thing that costs more is the
+jar's share here and the rest as ordinary spending.
+
 Only the source named exactly **Tips** is held back. Rename it in Settings and
 money tagged with the new name lands in your balance like anything else.
 
 **Tips are cash kept apart, not money.** So Spending leaves them out: a week's
 *Money in*, and a month's statement — what came in, and what rolls over. The
-jar's own docket is where tips are counted. Only a release turns them into
+same goes for anything bought from the jar. The jar's own docket is where tips
+are counted. Only a release turns them into
 money, and the month you release shows it under *Came in*.
 
 Both recording sheets carry a **When** row — Today, Yesterday, or a picker —
@@ -429,7 +445,10 @@ A few things worth knowing if you change the code:
   nothing; releasing is that cut given back. No new transaction kind, no second
   set of sums. The two entries are joined by `pair`, so undoing the tip takes
   its holding with it — otherwise the balance drops while the jar keeps the
-  coins.
+  coins. Spending from the jar is the same move the other way: an `expense`
+  marked `jar`, and a cut of the same amount back out of the jar paired to it.
+  Every money total (`spentIn`, `burnRate`, the statement) skips an expense
+  marked `jar` (`fromJar()`), just as `incomeBy` skips a tip.
 - **Sync merges, it never replaces.** `mergeStates()` is the whole contract; if
   you add a field to the state, decide how it merges. Anything device-local
   (theme, the sync switch) goes in `LOCAL_SETTINGS` so it is never pushed.

@@ -1009,7 +1009,7 @@ function derive(){
 
 function spentIn(p){
   let total = 0;
-  for (const t of state.tx) if (t.kind === "expense" && inPeriod(t, p)) total += num(t.amount);
+  for (const t of state.tx) if (t.kind === "expense" && !t.jar && inPeriod(t, p)) total += num(t.amount);
   return round2(total);
 }
 /** A period's money in, grouped by where it came from. Borrowed money is
@@ -1039,7 +1039,14 @@ function incomeBy(p){
    *and* is cut straight into a holding item in the same breath, so the balance
    does not move; releasing is the cut given back. That means no new kind of
    transaction, no second set of sums, and the hand count already knows the
-   coins are real, because a tips item counts as money still in your pocket. */
+   coins are real, because a tips item counts as money still in your pocket.
+   Spending straight from the jar is the same move the other way: an ordinary
+   expense marked `jar`, and a cut out of the jar paired to it, so the balance
+   does not move and the jar drops by what you paid. */
+
+/** A spend paid out of the tip jar rather than out of your money. It is tips,
+    not money, so every money total leaves it out, the same as a tip. */
+function fromJar(t){ return t.kind === "expense" && !!t.jar; }
 
 /** Find the jar, making it the first time a tip is recorded. */
 function tipJar(){
@@ -1050,13 +1057,13 @@ function tipJar(){
   }
   return j;
 }
-/** Every line the jar's own docket shows: tips in, releases out. The paired
-    cut is deliberately left out — it is plumbing, not an entry. */
+/** Every line the jar's own docket shows: tips in, spends and releases out.
+    The paired cuts are deliberately left out — they are plumbing, not entries. */
 function tipLog(){
   const jarId = (state.items.find(i => i.type === "tips") || {}).id;
   return state.tx.filter(t =>
-    (t.kind === "income" && t.jar)
-    || (jarId && t.kind === "allocate" && t.itemId === jarId && num(t.amount) < 0)
+    (t.kind === "income" && t.jar) || fromJar(t)
+    || (jarId && t.kind === "allocate" && t.itemId === jarId && num(t.amount) < 0 && !t.pair)
   ).sort(byDateDesc);
 }
 /** Tips earned in a month — releases are not earnings, so they are not counted. */
@@ -1084,7 +1091,8 @@ function spentSince(iso){
 /**
  * How fast money is actually leaving, over a window of at most the last 30
  * days. Spending only, never netted against income — netting would let a
- * one-off lump, the very money being counted down, pass for a wage.
+ * one-off lump, the very money being counted down, pass for a wage. A spend
+ * paid from the tip jar is left out: it never touched the money counted down.
  */
 function burnRate(){
   let firstISO = null;
@@ -1094,7 +1102,7 @@ function burnRate(){
   const from = new Date(); from.setDate(from.getDate() - span + 1);
   const fromISO = isoOf(from);
   let spent = 0;
-  state.tx.forEach(t => { if (t.kind === "expense" && t.date >= fromISO && t.date <= todayISO()) spent += num(t.amount); });
+  state.tx.forEach(t => { if (t.kind === "expense" && !t.jar && t.date >= fromISO && t.date <= todayISO()) spent += num(t.amount); });
   return { days: span, spent: round2(spent), perDay: round2(spent / span) };
 }
 
@@ -1521,7 +1529,7 @@ function viewHome(d){
   else html += latest.slice(0, 2).map(t => `
     <div class="lead">
       <span class="when" style="width:46px">${esc(relDay(t.date))}</span>
-      <span class="what">${esc(txName(t))}</span>
+      <span class="what">${esc(recName(t))}</span>
       <span class="dots"></span>
       <span class="amt">${esc(fmt(t.amount))}</span>
     </div>`).join("");
@@ -1563,6 +1571,9 @@ function viewHome(d){
 function txName(t){
   return (t.note && t.note.trim()) || t.label || (t.kind === "income" ? "Money in" : "Spending");
 }
+/** The same, in a list that mixes money with tips: a spend paid from the jar
+    says so, or it reads as money gone that never left your balance. */
+function recName(t){ return txName(t) + (fromJar(t) ? " · from tips" : ""); }
 
 function byDateDesc(a, b){
   if (a.date === b.date) return a.id < b.id ? 1 : -1;
@@ -1717,18 +1728,19 @@ function monthStatement(p){
     if (k === "save") { if (!gone[t.itemId] || p.to < gone[t.itemId]) inGoals += amt; }
     /* The tip jar is cash kept apart, not money: a tip and the cut that holds
        it in the jar cancel out, and only what is released from the jar ever
-       becomes money. Counting the net keeps that exact, pairs or no pairs. */
-    const jar = t.kind === "income" && t.jar ? amt : k === "jar" ? -amt : 0;
+       becomes money. A spend paid from the jar cancels with the cut that pays
+       it the same way. Counting the net keeps that exact, pairs or no pairs. */
+    const jar = t.kind === "income" && t.jar ? amt : fromJar(t) ? -amt : k === "jar" ? -amt : 0;
     if (t.date < p.from) {
       if (t.kind === "income") opening += amt;
       else if (t.kind === "expense") opening -= amt;
       else if (k === "debt" || k === "jar") opening -= amt;
-      if ((t.kind === "income" && !t.jar) || t.kind === "expense" || k === "debt" || (k === "jar" && amt < 0)) before = true;
+      if ((t.kind === "income" && !t.jar) || (t.kind === "expense" && !t.jar) || k === "debt" || (k === "jar" && amt < 0 && !t.pair)) before = true;
       return;
     }
     jarNet += jar;
     if (t.kind === "income" && !t.jar) income.push(t);
-    else if (t.kind === "expense") { spent += amt; count++; }
+    else if (t.kind === "expense" && !t.jar) { spent += amt; count++; }
     else if (k === "debt") debts[t.itemId] = (debts[t.itemId] || 0) + amt;
   });
 
@@ -1861,9 +1873,10 @@ function viewSpending(d){
   const p = periodAt(by, ui.back);
   const spent = spentIn(p);
   /* Money in belongs in the list too: it is the only place an entry can be
-     looked at, and a mistyped tip has to be undoable somewhere. */
+     looked at, and a mistyped tip has to be undoable somewhere. A spend paid
+     from the tip jar is listed as well, but like a tip it is not counted. */
   const recs = state.tx.filter(t => (t.kind === "expense" || t.kind === "income") && inPeriod(t, p)).sort(byDateDesc);
-  const outs = recs.filter(t => t.kind === "expense").length;
+  const outs = recs.filter(t => t.kind === "expense" && !t.jar).length;
   const word = by === "week" ? "week" : "month";
 
   /* The daily rate counts only days that have happened, and none before your
@@ -1929,7 +1942,7 @@ function viewSpending(d){
   /* Where it goes, by label */
   const groups = {};
   recs.forEach(t => {
-    if (t.kind !== "expense") return;
+    if (t.kind !== "expense" || t.jar) return;
     const l = (t.label || t.note || "Unlabelled").trim() || "Unlabelled";
     const k = l.toLowerCase();
     if (!groups[k]) groups[k] = { label:l, total:0, count:0 };
@@ -1978,7 +1991,7 @@ function viewSpending(d){
     html += `<div class="empty" style="margin-top:18px;border-top:1px dashed var(--dash)">Nothing recorded ${esc(periodPhrase(p))}.</div>`;
   } else {
     const daySpent = {};
-    recs.forEach(t => { if (t.kind === "expense") daySpent[t.date] = round2((daySpent[t.date] || 0) + num(t.amount)); });
+    recs.forEach(t => { if (t.kind === "expense" && !t.jar) daySpent[t.date] = round2((daySpent[t.date] || 0) + num(t.amount)); });
     const shown = ui.seeAll ? recs : recs.slice(0, 40);
     let day = null;
     html += shown.map(t => {
@@ -1990,7 +2003,7 @@ function viewSpending(d){
           ${daySpent[t.date] ? `<span class="fig" style="font-size:16px">${esc(fmt(daySpent[t.date]))}</span>` : ""}</div>`;
       }
       return head + `<div class="lead" style="border-bottom:1px dashed var(--dash)">
-        <span class="what">${esc(txName(t))}${t.auto ? " ·" : ""}</span>
+        <span class="what">${esc(recName(t))}${t.auto ? " ·" : ""}</span>
         <span class="dots"></span>
         <button class="undo" data-del-tx="${esc(t.id)}">Undo</button>
         <span class="amt"${t.kind === "income" ? ' style="color:var(--pos)"' : ""}>${t.kind === "income" ? "+" : ""}${esc(fmt(t.amount))}</span>
@@ -2007,7 +2020,7 @@ function viewSpending(d){
 /* ============================================================
    Sheets
    ============================================================ */
-function openSheet(title, body){
+function openSheet(title, body, opts){
   closeSheet(true);
   const app = document.getElementById("app");
   const backdrop = document.createElement("div");
@@ -2026,8 +2039,10 @@ function openSheet(title, body){
     <div class="sheet-body">${body}</div>`;
   app.appendChild(backdrop);
   app.appendChild(sheet);
+  /* A sheet led by the keypad keeps the phone's own keyboard down until the
+     text field is tapped, or it would sit over the keypad. */
   const first = sheet.querySelector("input,select,textarea");
-  if (first) setTimeout(() => first.focus(), 60);
+  if (first && !(opts && opts.focus === false)) setTimeout(() => first.focus(), 60);
 }
 function closeSheet(silent){
   const b = document.getElementById("backdrop"), s = document.getElementById("sheet");
@@ -2087,7 +2102,7 @@ function amountBlock(){
     full app render behind it. */
 function refreshSheet(){
   if (!ui.sheet) return;
-  const map = { spend:sheetSpend, income:sheetIncome, cut:sheetCut, take:sheetTake, count:sheetCount, delgoal:sheetDeleteGoal };
+  const map = { spend:sheetSpend, income:sheetIncome, cut:sheetCut, take:sheetTake, count:sheetCount, delgoal:sheetDeleteGoal, jarspend:sheetJarSpend };
   const fn = map[ui.sheet];
   if (!fn) return;
   /* Re-rendering under a typing finger would drop the caret and close the
@@ -2250,6 +2265,51 @@ function doRelease(){
           note:"Released into my money" });
   closeSheet(); render();
   toast("+" + fmt(d.tips) + " · yours to spend");
+}
+
+/* ---- spend straight from the tip jar ----
+   Some of the jar, not all of it, on one thing: a game, a night out. It never
+   passes through your money, so Money left does not move and the jar drops by
+   what you paid. Release is still the way to turn the lot into money. */
+function sheetJarSpend(re){
+  ui.sheet = "jarspend";
+  const d = derive();
+  const amt = padValue();
+  const named = (ui.other || "").trim();
+  const over = amt > d.tips + 0.005;
+  const can = amt > 0 && !over && !!named;
+  const body = `
+    ${amountBlock()}
+    <div class="lab head">What was it for</div>
+    <div class="field"><input class="input" id="f-other" value="${esc(ui.other)}" placeholder="Type what you bought" autocomplete="off"></div>
+    ${dateRow()}
+    <div class="say ${over ? "warn" : ""}">${esc(over
+      ? "The jar only holds " + fmt(d.tips) + "."
+      : "Comes out of the jar, not your spending money. " + fmt(round2(d.tips - amt)) + " stays in it.")}</div>
+    ${keypad()}
+    <button class="pill go ${can ? "" : "dead"}" data-do="jarspend">${
+      !amt ? "Enter an amount"
+      : over ? "More than the jar holds"
+      : !named ? "Say what it was for"
+      : "Spend " + esc(fmt(amt)) + " · " + esc(named)}</button>`;
+  if (re) sheetEl().querySelector(".sheet-body").innerHTML = body;
+  else openSheet("Spend from the jar", body, { focus:false });
+}
+function doJarSpend(){
+  const d = derive();
+  const amt = padValue();
+  const named = (val("#f-other") || ui.other || "").trim();
+  if (!d.jarId || d.tips <= 0.005) { closeSheet(); render(); return toast("Nothing in the jar yet"); }
+  if (amt <= 0) return toast("Enter an amount above zero");
+  if (amt > d.tips + 0.005) return toast("The jar only holds " + fmt(d.tips));
+  if (!named) return toast("Say what it was for");
+  const id = uid(), date = recordDate();
+  addTx({ id, kind:"expense", amount:amt, label:named, date, jar:true });
+  // Paid by the jar, not the balance: the same amount comes back out of the
+  // jar, paired to the spend so undoing it puts the money back in the jar.
+  addTx({ kind:"allocate", amount:-amt, itemId:d.jarId, date, pair:id, note:"Spent from the tip jar" });
+  closeSheet(); render();
+  toast("−" + fmt(amt) + " · " + named + " · " + fmt(derive().tips) + " left in the jar");
 }
 
 /* ---- cut money to a goal ---- */
@@ -2527,8 +2587,8 @@ function doDeleteGoal(spent){
 /* ---- the tip jar's own docket ----
    Tips come a few coins at a time and mean nothing one by one; the month is the
    figure worth seeing. So the log runs newest first under a heading per month
-   carrying that month's total, with each release shown as a line out — the jar
-   balances to what it holds, the same way the app does. */
+   carrying that month's total, with each spend and release shown as a line
+   out — the jar balances to what it holds, the same way the app does. */
 function sheetTips(){
   ui.sheet = "tips";
   const d = derive();
@@ -2550,10 +2610,10 @@ function sheetTips(){
           <span class="lab">${esc(monthLabel(m, true))}</span>
           <span class="fig" style="font-size:16px">${esc(fmt(got.total))}</span></div>`;
       }
-      const out = t.kind === "allocate";
+      const spend = fromJar(t), out = spend || t.kind === "allocate";
       return head + `<div class="lead" style="border-bottom:1px dashed var(--dash)">
         <span class="when" style="width:46px">${esc(relDay(t.date))}</span>
-        <span class="what">${out ? "Released into my money" : "Tip"}</span>
+        <span class="what">${spend ? esc(txName(t)) : out ? "Released into my money" : "Tip"}</span>
         <span class="dots"></span>
         <button class="undo" data-del-tx="${esc(t.id)}">Undo</button>
         <span class="amt"${out ? "" : ' style="color:var(--pos)"'}>${out ? "&minus;" : "+"}${esc(fmt(Math.abs(num(t.amount))))}</span>
@@ -2568,9 +2628,10 @@ function sheetTips(){
       month.total > 0.005
         ? esc(fmt(month.total) + " earned this month over " + month.days + " day" + (month.days === 1 ? "" : "s"))
         : "Nothing yet this month."}</div>
-    <div class="say">Tips sit here instead of in your spending money. Release them when the month is done and the jar goes back to zero.</div>
+    <div class="say">Tips sit here instead of in your spending money. Buy something with some of them and your money stays as it is, or release the lot when the month is done and the jar goes back to zero.</div>
     <button class="pill go ${d.tips > 0.005 ? "" : "dead"}" data-do="release">${
       d.tips > 0.005 ? "Release " + esc(fmt(d.tips)) + " into my money" : "Nothing to release"}</button>
+    ${d.tips > 0.005 ? `<button class="pill ghost" style="width:100%;margin-top:10px" data-act="jarspend">Spend some from the jar</button>` : ""}
     ${hist}`);
 }
 
@@ -2973,7 +3034,7 @@ document.addEventListener("click", e => {
   if (doer) {
     const map = {
       spend:doSpend, income:doIncome, cut:doCut, take:doTake, count:doCount,
-      release:doRelease, delspent:() => doDeleteGoal(true), delback:() => doDeleteGoal(false),
+      release:doRelease, jarspend:doJarSpend, delspent:() => doDeleteGoal(true), delback:() => doDeleteGoal(false),
       savesettings:doSaveSettings, copybackup:doCopyBackup, "paste-restore":doPasteRestore
     };
     if (doer.dataset.do === "saveitem") return doSaveItem(doer.dataset.id || null, doer.dataset.type);
@@ -2989,6 +3050,7 @@ document.addEventListener("click", e => {
     income: () => { ui.pad = ""; ui.borrow = ""; ui.src = ""; ui.date = todayISO(); ui.pick = false; sheetIncome(); },
     count: () => { ui.pad = ""; sheetCount(); },
     tips: sheetTips,
+    jarspend: () => { ui.pad = ""; ui.other = ""; ui.date = todayISO(); ui.pick = false; sheetJarSpend(); },
     settings: sheetSettings,
     closesheet: () => closeSheet(),
     startfresh: startFresh,

@@ -551,6 +551,7 @@ function defaultState(){
       payEvery:30,          // days between pays
       spendBy:"week",       // Spending reads a "week" or a "month" at a time
       payLag:7,             // paid this many days late: see payMonthOf. 0 = paid in the month
+      weekLimit:0,          // the most to spend in a week, Monday to Sunday. 0 = no limit
       updatedAt: now
     },
     items: [],              // goal | bill | repeat | tips
@@ -581,7 +582,7 @@ function freshState(){
   if (state) {
     state.tx.forEach(t => next.tombstones[t.id] = now);
     state.items.forEach(i => next.itemTombstones[i.id] = now);
-    ["currency","theme","name","sync","spendBy","payLag"].forEach(k => next.settings[k] = state.settings[k]);
+    ["currency","theme","name","sync","spendBy","payLag","weekLimit"].forEach(k => next.settings[k] = state.settings[k]);
   }
   return next;
 }
@@ -653,6 +654,7 @@ function migrate(data){
   s.settings.sync = s.settings.sync !== false;
   if (s.settings.spendBy !== "month") s.settings.spendBy = "week";
   s.settings.payLag = clamp(Math.round(num(s.settings.payLag)), 0, 31);
+  s.settings.weekLimit = Math.max(0, round2(num(s.settings.weekLimit)));
   s.settings.updatedAt = num(s.settings.updatedAt);
   s.settings.payEvery = clamp(Math.round(num(s.settings.payEvery)) || 30, 1, 365);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(s.settings.payday || "")) s.settings.payday = null;
@@ -1117,11 +1119,47 @@ function burnRate(){
   const fromISO = isoOf(from);
   /* A spend paid out of a goal is left out too: Money left lost that money
      when it was cut, so counting it again would run the clock down twice. */
-  const fromGoal = {};
-  state.tx.forEach(t => { if (t.kind === "allocate" && t.pair && num(t.amount) < 0) fromGoal[t.pair] = true; });
+  const fromGoal = goalPaidIds();
   let spent = 0;
   state.tx.forEach(t => { if (t.kind === "expense" && !t.jar && !fromGoal[t.id] && t.date >= fromISO && t.date <= todayISO()) spent += num(t.amount); });
   return { days: span, spent: round2(spent), perDay: round2(spent / span) };
+}
+/** Spends paid out of a goal (or the jar): the cut back out of it is paired to them. */
+function goalPaidIds(){
+  const m = {};
+  state.tx.forEach(t => { if (t.kind === "allocate" && t.pair && num(t.amount) < 0) m[t.pair] = true; });
+  return m;
+}
+
+/* ---- the weekly limit ----
+   The most you will spend in a week, Monday to Sunday, once pay has had its
+   cuts: Tuition and Mother come off first, and what is left is the week's
+   money. Home counts the week down from it.
+
+   It counts what you live on. A spend paid out of a goal is not counted —
+   Mother's money was set aside from pay, not from the week — and nor is one
+   paid from the tip jar. Bills are, because the week has to carry them.
+
+   Money left stays the headline: it is what you have. The limit is what you
+   have decided to let yourself spend, and a week under it leaves the rest in
+   Money left. */
+function weekLimit(){ return Math.max(0, num(state.settings.weekLimit)); }
+function limitSpentIn(p){
+  const fromGoal = goalPaidIds();
+  let total = 0;
+  for (const t of state.tx) if (t.kind === "expense" && !t.jar && !fromGoal[t.id] && inPeriod(t, p)) total += num(t.amount);
+  return round2(total);
+}
+function weekBudget(back){
+  const limit = weekLimit();
+  if (!limit) return null;
+  const p = periodAt("week", back || 0);
+  const spent = limitSpentIn(p);
+  const today = todayISO();
+  const daysLeft = p.to < today ? 0 : daysBetween(today > p.from ? today : p.from, p.to) + 1;   // today included
+  const left = round2(limit - spent);
+  return { limit, spent, left, over: left < -0.005, daysLeft,
+           perDay: daysLeft > 0 && left > 0 ? round2(left / daysLeft) : 0, p };
 }
 
 /** The pay period you are inside: payday-to-payday when one is set, else the
@@ -1555,6 +1593,28 @@ function viewHome(d){
           : "A bill ahead will not clear"}</b>
         <span>${esc(named)}</span>
       </span></div>`;
+  }
+  /* The week, once there is a limit: what is left of it, and what that comes
+     to a day for the days still to go. Over it, it says so in red, because
+     that is past the money you allowed yourself. Tap for the week's records. */
+  const wk = weekBudget();
+  if (wk) {
+    const pct = clamp(wk.spent / wk.limit * 100, 0, 100);
+    const sub = wk.over
+      ? fmt(wk.spent) + " spent · over by " + fmt(-wk.left) + " · a new week starts Monday"
+      : fmt(wk.spent) + " spent · " + (wk.daysLeft > 1
+          ? fmt(wk.perDay) + " a day for " + wk.daysLeft + " days"
+          : "the rest is today’s");
+    html += `<div data-act="week" style="cursor:pointer;margin-top:16px;border-top:1px dashed var(--dash);padding-top:3px">
+      <div class="lead">
+        <span class="when" style="width:26px">WK</span>
+        <span class="what">Left this week</span>
+        <span class="dots"></span>
+        <span class="amt"${wk.over ? ' style="color:var(--neg)"' : ""}>${esc(wk.over ? "−" + fmt(-wk.left) : fmt(wk.left))}</span>
+      </div>
+      <div class="gauge"><i class="${wk.over ? "hatch-neg" : "hatch-ink"}" style="width:${pct}%"></i></div>
+      <div style="font-size:13px;color:${wk.over ? "var(--neg)" : "var(--ink-2)"};margin-top:8px">${esc(sub)} · of ${esc(fmt(wk.limit, { whole:true }))}</div>
+    </div>`;
   }
   /* The tip jar, once there is one. It earns a line on Home because money you
      cannot see is money you forget to release. */
@@ -1997,6 +2057,18 @@ function viewSpending(d){
     <div style="font-size:14px;color:var(--ink-2);margin-top:8px">${esc(line.join(" · "))}</div>
     ${versus ? `<div style="font-size:13.5px;color:var(--ink-3);margin-top:2px">${esc(versus)}</div>` : ""}`;
 
+  /* A week against the limit. What was paid out of a goal is not the week's
+     to carry, so say so when it makes the two figures differ. */
+  const wkb = by === "week" ? weekBudget(ui.back) : null;
+  if (wkb) {
+    const lim = fmt(wkb.limit, { whole:true });
+    const aside = round2(spent - wkb.spent);
+    html += `<div style="font-size:13.5px;color:${wkb.over ? "var(--neg)" : "var(--ink-3)"};margin-top:2px">${esc(
+      (wkb.over ? fmt(-wkb.left) + " over your " + lim
+       : fmt(wkb.left) + (ui.back === 0 ? " left of your " : " under your ") + lim)
+      + (aside > 0.005 ? " · " + fmt(aside) + " paid from goals not counted" : ""))}</div>`;
+  }
+
   /* A month reads start to finish: what came in, what went, what rolls on. */
   if (by === "month") html += statementHTML(p);
 
@@ -2235,11 +2307,27 @@ function sheetSpend(re){
       `<button data-chip="${esc(l)}" aria-pressed="${ui.label === l}">${esc(l)}</button>`).join("")}</div>
     ${ui.label === OTHER ? `<div class="field"><input class="input" id="f-other" value="${esc(ui.other)}" placeholder="Type what it was for"></div>` : ""}
     ${dateRow()}
+    ${weekSay(amt)}
     ${keypad()}
     <button class="pill go ${can ? "" : "dead"}" data-do="spend">${
       !amt ? "Enter an amount" : (!named ? "Pick what it was for" : "Record " + esc(fmt(amt)) + " · " + esc(named))}</button>`;
   if (re) { sheetEl().querySelector(".sheet-body").innerHTML = body; }
   else openSheet("Spent", body);
+}
+/** With a weekly limit, the spend sheet says what the week has left, and what
+    this spend would leave of it — the week the spend falls in, not always
+    this one, so a receipt from last Friday is weighed against last week. */
+function weekSay(amt){
+  if (!weekLimit()) return "";
+  const wk = weekBudget(Math.max(0, periodsSince("week", recordDate())));
+  const after = round2(wk.left - (amt || 0));
+  const which = wk.p.back === 0 ? "this week" : "that week";
+  const text = !(amt > 0)
+    ? (wk.over ? fmt(-wk.left) + " over " + which + "’s " + fmt(wk.limit, { whole:true }) + " already."
+               : fmt(wk.left) + " left of " + which + "’s " + fmt(wk.limit, { whole:true }) + ".")
+    : after < -0.005 ? "Takes you " + fmt(-after) + " over " + which + "’s " + fmt(wk.limit, { whole:true }) + "."
+    : "Leaves " + fmt(after) + " of " + which + "’s " + fmt(wk.limit, { whole:true }) + ".";
+  return `<div class="say ${after < -0.005 ? "warn" : ""}">${esc(text)}</div>`;
 }
 function doSpend(){
   const amt = padValue();
@@ -2888,6 +2976,10 @@ function sheetSettings(){
     <div class="field"><label class="lab">Days between pays</label>
       <input class="input" id="f-payevery" inputmode="numeric" value="${esc(String(state.settings.payEvery))}"></div>
 
+    <div class="field"><label class="lab">Spend at most each week (optional)</label>
+      <input class="input" id="f-weeklimit" inputmode="decimal" value="${weekLimit() ? esc(fmt(weekLimit(), { bare:true })) : ""}" placeholder="165">
+      <div class="say">Home counts each week down from it, Monday to Sunday. What you pay out of a goal, like Mother’s money, is not counted against it.</div></div>
+
     <div class="field"><label class="lab">Currency</label>
       <select class="input" id="f-currency">${CURRENCIES.map(c =>
         `<option value="${c.code}" ${c.code === state.settings.currency ? "selected" : ""}>${c.symbol} ${c.code}</option>`).join("")}</select></div>
@@ -2946,6 +3038,7 @@ function doSaveSettings(){
   s.currency = CURRENCIES.some(c => c.code === val("#f-currency")) ? val("#f-currency") : "EUR";
   s.theme = ["auto","light","dark"].indexOf(val("#f-themeval")) >= 0 ? val("#f-themeval") : "auto";
   s.payLag = clamp(Math.round(num(val("#f-paylag"))), 0, 31);
+  s.weekLimit = Math.max(0, parseAmount(val("#f-weeklimit")));
   const seen = {};
   s.labels = (val("#f-labels") || "").split(",").map(x => x.trim())
     .filter(x => x && x !== OTHER && !seen[x.toLowerCase()] && (seen[x.toLowerCase()] = true)).slice(0, 12);
@@ -3231,6 +3324,7 @@ document.addEventListener("click", e => {
     tips: sheetTips,
     jarspend: () => { ui.pad = ""; ui.other = ""; ui.date = todayISO(); ui.pick = false; sheetJarSpend(); },
     cardpaste: doCardPaste,
+    week: () => { state.settings.spendBy = "week"; saveLocal(); ui.tab = "spending"; ui.back = 0; ui.seeAll = false; render(); },
     settings: sheetSettings,
     closesheet: () => closeSheet(),
     startfresh: startFresh,

@@ -307,6 +307,27 @@ with nothing recorded. **Paid in the month** turns this off.
 Taking money back from a debt goal is money coming back, so it is listed under
 *Came in* as **Taken back from** the goal.
 
+### A weekly limit
+
+Set **Settings → Spend at most each week** and Home counts each week down from
+it, Monday to Sunday, under the headline:
+
+```
+  WK   Left this week  ··························  €66.28
+       ▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪·················
+       €98.72 spent · €11.05 a day for 6 days · of €165
+```
+
+Past the limit, the figure and the line turn red and say by how much. Tap it
+for the week on Spending, which measures every week against the limit. The
+Record spending sheet weighs each spend against the week it falls in: *Leaves
+€54.28 of this week's €165*, or *Takes you €3.20 over*.
+
+It counts what you live on, bills included. It does not count what you pay
+out of a goal, like Mother's money, which came out of the pay before the week
+got it, nor a spend from the tip jar. Money left stays the headline, because it
+is what you actually have. A week under the limit leaves the rest there.
+
 ### Payday, or not
 
 Set a payday in Settings and Home counts down to it: *"12 days to payday ·

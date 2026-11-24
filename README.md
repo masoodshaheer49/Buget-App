@@ -399,16 +399,19 @@ day, is skipped.
 2. **Format Date**: Current Date, Date Format *Custom*, `yyyy-MM-dd HH:mm`.
 3. **Text**: `Pockets | ` *Formatted Date* ` | ` *Shortcut Input → Amount*
    ` | ` *Shortcut Input → Merchant*.
-4. **Append to Text File**: append *Text* to `Pockets/payments.txt` in the
+4. **Append to Text File**: append *Text* to `pockets-payments.txt` in the
    Shortcuts folder, with *Make New Line* on.
-5. **Get File from Folder**: Shortcuts, `Pockets/payments.txt`.
-6. **Copy to Clipboard**: *File*.
+5. **Get File from Folder**: Shortcuts, `pockets-payments.txt`.
+6. **Get Text from Input**: *File*.
+7. **Copy to Clipboard**: *Text*.
+
+Make steps 5–7 a shortcut of their own too, called *Copy for Pockets*, for when
+you have copied something else since you paid.
 
 The first time, paste from **Settings → Card payments**. After that Home has a
 **Card payments · Paste** row. iOS asks before a page reads the clipboard, so
-tap its *Paste* button. If you have copied something else since, run the
-Shortcut's last two steps on their own, or press and hold in the box the app
-offers and paste there.
+tap its *Paste* button. If nothing comes through, run *Copy for Pockets*, or
+press and hold in the box the app offers and paste there.
 
 Only Apple Pay taps come through. Online payments, direct debits and bank
 transfers do not, so record those yourself, or check them against your

@@ -78,6 +78,30 @@ A goal is a pot you cut money to. Two kinds:
 A goal holds nothing until you cut money to it. That is the whole model — there
 are no envelopes to keep topped up.
 
+**A goal can take its share of your pay as it lands.** Edit a goal and fill in
+*From each salary*: an amount, and **Every pay** or **Each month**. From then
+on, money in tagged **Salary** is cut to that goal the moment you add it, and
+the Money in sheet says so before you confirm:
+
+```
+  €330 · Salary
+  €150.00 to Mother, €100.00 to Tuition as it lands — €80.00 is yours to spend.
+```
+
+*Each month* takes from the month's first pay, and from the next one if the
+first was short, until the month's amount is in. A cut you made to the goal by
+hand that month counts towards it. Nothing takes more than the pay itself, so
+goals higher up the list are served first, and nothing takes a goal past its
+target. Undo the pay and its cuts go with it. Switching this on does not reach
+back into pay you already had.
+
+**Pay from it** spends money a savings goal is holding. Money set aside for
+someone, like Mother's €150, is paid out of the goal, not out of Money left, which
+already lost it when it was cut. So Money left stays where it is and the goal
+drops. The spend is listed as *Mother · from Mother*. It counts as spending
+everywhere, because it is money leaving, except in how long your money lasts,
+which it never touched.
+
 **Deleting a savings goal that holds money asks whether you spent it.** Saved
 up and then paid out — a deposit, a fee, the IRP — the money has left your
 account: **Spent it** records it as spending on the day you paid, and Money
@@ -89,19 +113,24 @@ Cutting takes the money out of **Money left** the moment you do it, which is the
 point: it is no longer yours to spend. It does not take it out of your bank,
 though — a savings goal is a decision, not a transfer. So **Count my money**
 measures your hand count against *what you should be holding*, spelling out the
-sum when a goal or the tip jar is holding anything:
+sum when a goal is holding anything:
 
 ```
   Money left                €792.72
-  Held in goals and tips    €100.00
+  Held in goals             €100.00
   ─────────────────────────────────
   So you should be holding  €892.72
 ```
 
 Money cut to a **debt** goal is not added back, because paying a debt really
 does empty the account — for a debt, the cut *is* the payment. Measuring against
-Money left alone would report every savings goal, and every coin in the tip jar,
-as money gone missing, and the write-off would quietly spend it.
+Money left alone would report every savings goal as money gone missing, and the
+write-off would quietly spend it.
+
+**The tip jar is left out of the count**, and the sheet says so. Tips are kept
+out of your money, and they are not a pile of coins you are holding either:
+they come in with the pay or get spent as they arrive. Adding the jar to what
+you should be holding would report it as missing every time you count.
 
 ### Bills
 
@@ -321,6 +350,52 @@ The hash is consumed on arrival, so a refresh cannot record the same thing
 twice, and the app listens for later hash changes too — so a Shortcut fired
 while the app is already open still works.
 
+## Card payments from Apple Pay
+
+An iPhone Shortcut can run every time a card in Wallet is tapped, and it is
+handed the shop and the amount. It cannot open a home-screen web app, and a
+link it opens lands in Safari, which keeps its own storage apart from the
+home-screen app's. So the Shortcut writes each payment as a line in a text file
+and copies the file, and Pockets reads it off the clipboard when you tap
+**Paste**:
+
+```
+Pockets | 2026-11-24 13:02 | €5.65 | TESCO STORES 6387
+```
+
+Each payment is filed by the shop: like the last payment there of about the
+same size (so Jacobs Inn at €48 is Hostel and at €2.50 is Coffee), else by what
+the shop is (Tesco is Groceries, Bus Éireann is Transport), else as Other. A
+shop you last paid out of a goal is paid out of that goal again, while it holds
+enough. Pasting the same list twice adds nothing, a payment you undo stays
+undone, and one you already typed in by hand, with the same amount within a
+day, is skipped.
+
+**Setting it up** (Shortcuts app → Automation → **+** → **Transaction**):
+
+1. Pick every card you pay with. Choose **Run Immediately** → Next →
+   **New Blank Automation**.
+2. **Format Date**: Current Date, Date Format *Custom*, `yyyy-MM-dd HH:mm`.
+3. **Text**: `Pockets | ` *Formatted Date* ` | ` *Shortcut Input → Amount*
+   ` | ` *Shortcut Input → Merchant*.
+4. **Append to Text File**: append *Text* to `Pockets/payments.txt` in the
+   Shortcuts folder, with *Make New Line* on.
+5. **Get File from Folder**: Shortcuts, `Pockets/payments.txt`.
+6. **Copy to Clipboard**: *File*.
+
+The first time, paste from **Settings → Card payments**. After that Home has a
+**Card payments · Paste** row. iOS asks before a page reads the clipboard, so
+tap its *Paste* button. If you have copied something else since, run the
+Shortcut's last two steps on their own, or press and hold in the box the app
+offers and paste there.
+
+Only Apple Pay taps come through. Online payments, direct debits and bank
+transfers do not, so record those yourself, or check them against your
+statement.
+
+A copy opened in Safari can take the same payment as a link instead:
+`#card=Tesco&amount=5.65&at=2026-11-24%2013:02`.
+
 ## Sync across devices
 
 *This applies to the Claude Artifact build only.* Its runtime provides the
@@ -436,7 +511,24 @@ A few things worth knowing if you change the code:
 - **`left = cash − cuts`.** `cash` is income minus every expense; `cuts` is what
   currently sits in goals. That one line is the app. `onHand` adds back only the
   savings goals — what a hand count should come to — and is what Count my money
-  reconciles against.
+  reconciles against. The tip jar is not added back.
+- **A salary cut is an ordinary cut.** `applyPayCuts()` writes one `allocate`
+  per goal with `payCut` set, with an id built from the pay and the goal
+  (`pc-<pay>-<goal>`) and `pair` set to the pay, so Undo takes them together
+  and one pay is never cut twice. `payCutsFor()` is the same sum without the
+  writing, which is what the Money in sheet shows. Goals are served in list
+  order and never past the pay or the target.
+- **Paying from a goal is the jar's move.** An `expense` and an `allocate` of
+  minus the same amount to the goal, paired to it. `paidFrom()` finds the goal
+  through the pair. `burnRate()` skips the expense, as it skips a jar spend.
+- **A card payment's id is the line it came from.** `card-` and a hash of its
+  date, time, amount and shop, so pasting the Shortcut's whole list again adds
+  nothing and a payment you undo stays undone (its tombstone blocks it). A
+  payment skipped because you typed it in already gets a tombstone too, so it
+  is judged once. `fileCard()` files it like the nearest-sized past payment at
+  the same shop, else by `CARD_LABELS`, else as Other.
+- **Saving waits 60ms, and leaving the page writes at once** (`flushSave()` on
+  `pagehide` and on going hidden), so a tap followed by a swipe away is kept.
 - **Goals, bills, repeating charges and the tip jar share one `items` array**,
   told apart by `type`. That is deliberate: the sync merge then has a single rule
   for all of them instead of four that can drift.

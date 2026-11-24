@@ -566,6 +566,7 @@ function mkItem(patch){
     deletedOn:null,         // a goal money moved through is kept, hidden, from this date
     updatedAt: Date.now(),
     /* goal */ kind:"save", target:0, targetDate:null,
+               payCut:0, payCutPer:"pay",   // taken from each salary as it lands: see applyPayCuts
     /* bill */ amount:0, dueDay:null, cycleDays:null, cycleStart:null,
     /* repeat */ days:[], from:null
   }, patch);
@@ -690,6 +691,8 @@ function migrate(data){
     kind: c.kind === "debt" ? "debt" : "save",
     target: num(c.target),
     targetDate: /^\d{4}-\d{2}$/.test(c.targetDate || "") ? c.targetDate : null,
+    payCut: Math.max(0, round2(num(c.payCut))),
+    payCutPer: c.payCutPer === "month" ? "month" : "pay",
     amount: num(c.amount),
     dueDay: c.dueDay == null ? null : clamp(Math.round(num(c.dueDay)), 1, 31),
     cycleDays: clamp(Math.round(num(c.cycleDays)), 0, 365) || null,
@@ -803,6 +806,15 @@ function saveLocal(){
   }, 60);
 }
 function save(){ saveLocal(); schedulePush(); }
+/* Saving waits 60ms so a burst of entries is written once. A tap followed at
+   once by a swipe away must still be written, so leaving the page writes now. */
+function flushSave(){
+  if (!saveTimer || !state) return;
+  clearTimeout(saveTimer); saveTimer = null;
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch (e) {}
+}
+window.addEventListener("pagehide", flushSave);
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") flushSave(); });
 
 /* ============================================================
    Small helpers
@@ -979,14 +991,16 @@ function derive(){
   Object.keys(held).forEach(k => held[k] = round2(held[k]));
 
   /* Money cut to a savings goal is spoken for but has not gone anywhere - it is
-     still in the account, and it turns up in a hand count. Same for the tip jar:
-     those are coins in your pocket. Money cut to a debt goal has left the
-     account, because cutting to a debt *is* the payment. So only the first two
-     are added back to work out what you should be holding. */
+     still in the account, and it turns up in a hand count. Money cut to a debt
+     goal has left the account, because cutting to a debt *is* the payment. So
+     only savings goals are added back to work out what you should be holding.
+     The tip jar is not: tips are kept out of your money, and they are not a
+     pile of coins you are holding either — they land in the account with the
+     pay, or get spent as they come. Counting them would report the jar as
+     money gone missing, and the write-off would spend it. */
   let saved = 0, goalSaved = 0;
   state.items.forEach(i => {
     if (i.type === "goal" && i.kind !== "debt") { goalSaved += held[i.id] || 0; saved += held[i.id] || 0; }
-    else if (i.type === "tips") saved += held[i.id] || 0;
   });
 
   const jar = state.items.find(i => i.type === "tips") || null;
@@ -1101,8 +1115,12 @@ function burnRate(){
   const span = clamp(daysBetween(firstISO, todayISO()) + 1, 1, 30);
   const from = new Date(); from.setDate(from.getDate() - span + 1);
   const fromISO = isoOf(from);
+  /* A spend paid out of a goal is left out too: Money left lost that money
+     when it was cut, so counting it again would run the clock down twice. */
+  const fromGoal = {};
+  state.tx.forEach(t => { if (t.kind === "allocate" && t.pair && num(t.amount) < 0) fromGoal[t.pair] = true; });
   let spent = 0;
-  state.tx.forEach(t => { if (t.kind === "expense" && !t.jar && t.date >= fromISO && t.date <= todayISO()) spent += num(t.amount); });
+  state.tx.forEach(t => { if (t.kind === "expense" && !t.jar && !fromGoal[t.id] && t.date >= fromISO && t.date <= todayISO()) spent += num(t.amount); });
   return { days: span, spent: round2(spent), perDay: round2(spent / span) };
 }
 
@@ -1209,6 +1227,58 @@ function goalPace(g, saved){
     overdue: monthsLeft <= 0 && remaining > 0.005,
     label: monthLabel(g.targetDate)
   };
+}
+
+/* ---- salary cuts ----
+   A goal can take its share of a pay the moment the pay lands: Tuition €100
+   from every pay, Mother €150 a month. Without it the money sits in Money left
+   for a few days, looking spendable, until you remember to cut it.
+
+   "Each month" takes from the first pay of a month that has room, and from
+   the next one if the first was short, until the month's amount is in. It
+   counts every cut made to the goal that month, by hand or by a pay, so a
+   month you already covered yourself is not taken twice. Nothing ever takes
+   more than the pay itself, nor past what a goal still needs to reach its
+   target or clear its debt.
+
+   The cuts are ordinary cuts, paired to the pay, so undoing the pay takes
+   them with it. Their ids come from the pay and the goal, so a cut is never
+   made twice for one pay. Only a pay recorded from now on is cut: switching a
+   goal on does not reach back into pay already spent. */
+function payCutText(g){
+  if (num(g.payCut) <= 0) return "";
+  return fmt(g.payCut) + (g.payCutPer === "month" ? " a month from pay" : " from every pay");
+}
+function payCutsFor(amount, date){
+  const d = derive();
+  const mk = monthOfISO(date);
+  let room = round2(num(amount));
+  const out = [];
+  d.goals.forEach(g => {
+    if (num(g.payCut) <= 0 || room <= 0.005) return;
+    let want = num(g.payCut);
+    if (g.payCutPer === "month") {
+      let already = 0;
+      state.tx.forEach(t => {
+        if (t.kind === "allocate" && t.itemId === g.id && num(t.amount) > 0 && monthOfISO(t.date) === mk) already += num(t.amount);
+      });
+      want = Math.max(0, want - already);
+    }
+    if (num(g.target) > 0) want = Math.min(want, Math.max(0, num(g.target) - (d.held[g.id] || 0)));
+    const amt = round2(Math.min(want, room));
+    if (amt <= 0.005) return;
+    room = round2(room - amt);
+    out.push({ goal: g, amount: amt });
+  });
+  return out;
+}
+function applyPayCuts(pay){
+  const cuts = payCutsFor(pay.amount, pay.date);
+  cuts.forEach(c => addTx({
+    id: "pc-" + pay.id + "-" + c.goal.id, kind:"allocate", amount:c.amount, itemId:c.goal.id,
+    date: pay.date, pair: pay.id, auto:true, note:"From pay to " + c.goal.name
+  }));
+  return cuts;
 }
 
 /* ---- repeating charges ----
@@ -1533,6 +1603,14 @@ function viewHome(d){
       <span class="dots"></span>
       <span class="amt">${esc(fmt(t.amount))}</span>
     </div>`).join("");
+  /* Once the card Shortcut is in use, bringing its payments in is one tap
+     from Home rather than three from Settings. */
+  if (usesCardShortcut()) html += `<button class="lead" data-act="cardpaste" style="border-bottom:1px dashed var(--dash)">
+      <span class="when" style="width:46px">CARD</span>
+      <span class="what">Card payments</span>
+      <span class="dots"></span>
+      <span class="amt" style="font-family:var(--mono);font-size:11px;letter-spacing:.16em;text-transform:uppercase">Paste</span>
+    </button>`;
   html += `</div>`;
 
   /* The bar: how the period's money has gone */
@@ -1573,7 +1651,11 @@ function txName(t){
 }
 /** The same, in a list that mixes money with tips: a spend paid from the jar
     says so, or it reads as money gone that never left your balance. */
-function recName(t){ return txName(t) + (fromJar(t) ? " · from tips" : ""); }
+function recName(t){
+  if (fromJar(t)) return txName(t) + " · from tips";
+  const g = paidFrom(t);
+  return txName(t) + (g ? " · from " + g.name : "");
+}
 
 function byDateDesc(a, b){
   if (a.date === b.date) return a.id < b.id ? 1 : -1;
@@ -1640,8 +1722,10 @@ function viewGoals(d){
         <span>${Math.round(pct)}% there</span>
         <span>${esc(pacing)}</span>
       </div>` : ""}
+      ${num(g.payCut) > 0 ? `<div style="font-size:13.5px;color:var(--ink-2);margin-top:10px">Takes ${esc(payCutText(g))}</div>` : ""}
       <div style="display:flex;gap:10px;margin-top:16px;flex-wrap:wrap">
         <button class="pill sm" data-cut="${esc(g.id)}">${debt ? "Pay some off" : "Cut money to it"}</button>
+        ${!debt && saved > 0.005 ? `<button class="pill sm ghost" data-goalpay="${esc(g.id)}">Pay from it</button>` : ""}
         <button class="pill sm ghost" data-take="${esc(g.id)}">Take money back…</button>
         <button class="pill sm ghost" data-edit-item="${esc(g.id)}">Edit</button>
       </div>
@@ -2102,7 +2186,7 @@ function amountBlock(){
     full app render behind it. */
 function refreshSheet(){
   if (!ui.sheet) return;
-  const map = { spend:sheetSpend, income:sheetIncome, cut:sheetCut, take:sheetTake, count:sheetCount, delgoal:sheetDeleteGoal, jarspend:sheetJarSpend };
+  const map = { spend:sheetSpend, income:sheetIncome, cut:sheetCut, take:sheetTake, count:sheetCount, delgoal:sheetDeleteGoal, jarspend:sheetJarSpend, goalpay:sheetGoalPay };
   const fn = map[ui.sheet];
   if (!fn) return;
   /* Re-rendering under a typing finger would drop the caret and close the
@@ -2194,6 +2278,12 @@ function sheetIncome(re){
     say = "Held in your tip jar, not your spending money — " + fmt(jarNow) + " in it."
         + (month.total > 0.005 ? " " + fmt(month.total) + " this month over " + month.days
             + " day" + (month.days === 1 ? "" : "s") + "." : "");
+  } else if (named && named.toLowerCase() === SALARY.toLowerCase() && payCutsFor(amt || 1e9, recordDate()).length) {
+    /* Say what the goals take before it is taken, not after. */
+    const cuts = payCutsFor(amt || 1e9, recordDate());
+    const taken = round2(cuts.reduce((a, c) => a + c.amount, 0));
+    say = cuts.map(c => fmt(c.amount) + " to " + c.goal.name).join(", ") + " as it lands"
+        + (amt > 0 ? " — " + fmt(round2(amt - taken)) + " is yours to spend." : ".");
   } else if (named) {
     const sofar = incomeBy(periodAt("month", 0))[named.toLowerCase()];
     say = sofar
@@ -2253,10 +2343,13 @@ function doIncome(){
     from.updatedAt = Date.now();
     save();
   }
+  const cuts = !from && named.toLowerCase() === SALARY.toLowerCase()
+    ? applyPayCuts(state.tx.find(t => t.id === id)) : [];
   closeSheet(); render();
   toast(from ? "+" + fmt(amt) + " · you owe " + fmt(goalFigure(from, derive().held[from.id] || 0))
       : toJar ? fmt(amt) + " into the jar · " + fmt(derive().tips) + " in it"
-      : "+" + fmt(amt) + (named ? " · " + named : ""));
+      : "+" + fmt(amt) + (named ? " · " + named : "")
+        + cuts.map(c => " · " + fmt(c.amount) + " → " + c.goal.name).join(""));
 }
 function doRelease(){
   const d = derive();
@@ -2391,6 +2484,67 @@ function doTake(){
   toast(fmt(amt) + " back in your balance");
 }
 
+/* ---- pay something out of a goal ----
+   Money set aside for someone — Mother's €150 — is paid out of the goal, not
+   out of Money left, which already lost it when it was cut. So it is the jar's
+   move: a spend, and a cut of the same amount back out of the goal paired to
+   it. Money left does not move; the goal drops. Unlike a jar spend it is real
+   money leaving, so it counts as spending everywhere spending is counted. */
+function sheetGoalPay(re){
+  ui.sheet = "goalpay";
+  const d = derive();
+  const g = d.goals.find(x => x.id === ui.goalId);
+  if (!g) return closeSheet();
+  const saved = d.held[g.id] || 0;
+  const amt = padValue();
+  const named = (ui.other || "").trim();
+  const over = amt > saved + 0.005;
+  const can = amt > 0 && !over && !!named;
+  const body = `
+    ${amountBlock()}
+    <div class="chips" style="padding:12px 0 0"><button data-sugg="${saved}">All of it · ${esc(fmt(saved))}</button></div>
+    <div class="lab head">What was it for</div>
+    <div class="field"><input class="input" id="f-other" value="${esc(ui.other)}" placeholder="Type what you paid" autocomplete="off"></div>
+    ${dateRow()}
+    <div class="say ${over ? "warn" : ""}">${esc(over
+      ? g.name + " only holds " + fmt(saved) + "."
+      : "Comes out of " + g.name + ", not your spending money. " + fmt(round2(saved - amt)) + " stays in it.")}</div>
+    ${keypad()}
+    <button class="pill go ${can ? "" : "dead"}" data-do="goalpay">${
+      !amt ? "Enter an amount"
+      : over ? "More than " + esc(g.name) + " holds"
+      : !named ? "Say what it was for"
+      : "Pay " + esc(fmt(amt)) + " · " + esc(named)}</button>`;
+  if (re) sheetEl().querySelector(".sheet-body").innerHTML = body;
+  else openSheet("Pay from " + g.name, body, { focus:false });
+}
+function doGoalPay(){
+  const d = derive();
+  const g = d.goals.find(x => x.id === ui.goalId);
+  if (!g) { closeSheet(); return toast("That goal has been deleted"); }
+  const saved = d.held[g.id] || 0;
+  const amt = padValue();
+  const named = (val("#f-other") || ui.other || "").trim();
+  if (amt <= 0) return toast("Enter an amount above zero");
+  if (amt > saved + 0.005) return toast(g.name + " only holds " + fmt(saved));
+  if (!named) return toast("Say what it was for");
+  payFromGoal(g, amt, named, "", recordDate());
+  closeSheet(); render();
+  toast("−" + fmt(amt) + " · " + named + " · " + fmt(derive().held[g.id] || 0) + " left in " + g.name);
+}
+function payFromGoal(g, amount, label, note, date, id){
+  id = id || uid();
+  addTx({ id, kind:"expense", amount, label, note, date });
+  addTx({ id: id + "-g", kind:"allocate", amount:-amount, itemId:g.id, date, pair:id, note:"Paid from " + g.name });
+}
+/** The goal a spend was paid out of, if it was: the cut back out of a goal
+    paired to it says so. */
+function paidFrom(t){
+  if (t.kind !== "expense" || t.jar) return null;
+  const a = state.tx.find(x => x.pair === t.id && x.kind === "allocate" && num(x.amount) < 0);
+  return a ? state.items.find(i => i.id === a.itemId && i.type === "goal") || null : null;
+}
+
 /* ---- add / edit a goal, a bill, or a repeating charge ---- */
 function sheetEditItem(id, type){
   const item = id ? state.items.find(i => i.id === id) : null;
@@ -2414,7 +2568,15 @@ function sheetEditItem(id, type){
     <div class="field"><label class="lab">Target</label>
       <input class="input" id="f-target" inputmode="decimal" value="${v.target ? esc(fmt(v.target, { bare:true })) : ""}" placeholder="4600"></div>
     <div class="field"><label class="lab">By when (optional)</label>
-      <input class="input" id="f-targetdate" type="month" value="${esc(v.targetDate || "")}"></div>`;
+      <input class="input" id="f-targetdate" type="month" value="${esc(v.targetDate || "")}"></div>
+    <div class="field"><label class="lab">From each salary (optional)</label>
+      <input class="input" id="f-paycut" inputmode="decimal" value="${num(v.payCut) > 0 ? esc(fmt(v.payCut, { bare:true })) : ""}" placeholder="100">
+      <div class="chips" style="padding-top:10px">
+        <button data-per="pay" aria-pressed="${v.payCutPer !== "month"}">Every pay</button>
+        <button data-per="month" aria-pressed="${v.payCutPer === "month"}">Each month</button>
+      </div>
+      <input type="hidden" id="f-payper" value="${v.payCutPer === "month" ? "month" : "pay"}"></div>
+    <div class="say">Cut the moment money tagged “${esc(SALARY)}” comes in. Each month takes it from that month’s first pay, or the next if the first is short.</div>`;
   } else if (t === "bill") {
     body += `
     <div class="field"><label class="lab">Amount</label>
@@ -2460,6 +2622,8 @@ function doSaveItem(id, type){
     patch.kind = val("#f-kind") === "debt" ? "debt" : "save";
     patch.target = parseAmount(val("#f-target"));
     patch.targetDate = /^\d{4}-\d{2}$/.test(val("#f-targetdate")) ? val("#f-targetdate") : null;
+    patch.payCut = Math.max(0, parseAmount(val("#f-paycut")));
+    patch.payCutPer = val("#f-payper") === "month" ? "month" : "pay";
   } else if (type === "bill") {
     patch.amount = parseAmount(val("#f-amount"));
     if (patch.amount <= 0) return toast("Give it an amount");
@@ -2648,14 +2812,12 @@ function sheetCount(re){
   const diff = round2(counted - d.onHand);
   const off = Math.abs(diff) > 0.005;
   const split = d.saved > 0.005;
-  /* Name what is actually being added back, so the row is never a claim about
-     goals when the money is really tip coins. */
-  const heldWhat = d.goalSaved > 0.005 && d.tips > 0.005 ? "goals and tips"
-                 : d.tips > 0.005 ? "the tip jar" : "goals";
+  const heldWhat = "goals";
 
   let say;
   if (!typed) {
-    say = "Add up your cash and your bank" + (split ? ", " + heldWhat + " included, " : " ") + "and type the lot.";
+    say = "Add up your cash and your bank" + (split ? ", " + heldWhat + " included, " : " ") + "and type the lot."
+        + (d.tips > 0.005 ? " Leave the tip jar out." : "");
   } else if (!off) {
     say = "Spot on. Nothing to change.";
   } else if (diff < 0) {
@@ -2758,6 +2920,10 @@ function sheetSettings(){
         <span class="amt">${esc(fmt(r.amount))}</span></button>`).join("")
       || `<div class="say" style="padding-bottom:10px">None set up.</div>`}
     <button class="pill ghost sm" style="width:100%;margin-top:10px" data-new-item="repeat">Add a repeating charge</button>
+
+    <div class="lab" style="margin-top:26px;padding-bottom:9px;border-bottom:1px dashed var(--dash)">Card payments</div>
+    <div class="say">An iPhone Shortcut notes every Apple Pay tap and copies the list. Paste brings in what is new: each is filed by the shop, and one you already typed in is skipped. Online payments, direct debits and transfers do not come through — record those yourself.</div>
+    <button class="pill ghost sm" style="width:100%;margin-top:10px" data-act="cardpaste">Paste card payments</button>
 
     <div class="lab" style="margin-top:26px;padding-bottom:9px;border-bottom:1px dashed var(--dash)">This device</div>
     <div class="setrow" id="sync-row">
@@ -2979,6 +3145,12 @@ document.addEventListener("click", e => {
     sheetEl().querySelectorAll("[data-kind]").forEach(b => b.setAttribute("aria-pressed", b === kind));
     return;
   }
+  const per = hit("[data-per]");
+  if (per) {
+    sheetEl().querySelector("#f-payper").value = per.dataset.per;
+    sheetEl().querySelectorAll("[data-per]").forEach(b => b.setAttribute("aria-pressed", b === per));
+    return;
+  }
   const shape = hit("[data-shape]");
   if (shape) {
     const s = shape.dataset.shape;
@@ -3018,6 +3190,13 @@ document.addEventListener("click", e => {
   if (cut) { ui.goalId = cut.dataset.cut; ui.pad = ""; sheetCut(); return; }
   const take = hit("[data-take]");
   if (take) { ui.goalId = take.dataset.take; ui.pad = ""; sheetTake(); return; }
+  const goalPay = hit("[data-goalpay]");
+  if (goalPay) {
+    const g = state.items.find(i => i.id === goalPay.dataset.goalpay);
+    ui.goalId = goalPay.dataset.goalpay; ui.pad = ""; ui.other = g ? g.name : "";
+    ui.date = todayISO(); ui.pick = false;
+    sheetGoalPay(); return;
+  }
   const openGoal = hit("[data-open-goal]");
   if (openGoal) { ui.tab = "goals"; render(); return; }
 
@@ -3034,7 +3213,7 @@ document.addEventListener("click", e => {
   if (doer) {
     const map = {
       spend:doSpend, income:doIncome, cut:doCut, take:doTake, count:doCount,
-      release:doRelease, jarspend:doJarSpend, delspent:() => doDeleteGoal(true), delback:() => doDeleteGoal(false),
+      release:doRelease, jarspend:doJarSpend, goalpay:doGoalPay, cardtext:doCardText, delspent:() => doDeleteGoal(true), delback:() => doDeleteGoal(false),
       savesettings:doSaveSettings, copybackup:doCopyBackup, "paste-restore":doPasteRestore
     };
     if (doer.dataset.do === "saveitem") return doSaveItem(doer.dataset.id || null, doer.dataset.type);
@@ -3051,6 +3230,7 @@ document.addEventListener("click", e => {
     count: () => { ui.pad = ""; sheetCount(); },
     tips: sheetTips,
     jarspend: () => { ui.pad = ""; ui.other = ""; ui.date = todayISO(); ui.pick = false; sheetJarSpend(); },
+    cardpaste: doCardPaste,
     settings: sheetSettings,
     closesheet: () => closeSheet(),
     startfresh: startFresh,
@@ -3080,6 +3260,144 @@ if (themeQuery) {
   const onScheme = () => { if (!state || state.settings.theme === "auto") applyTheme(); };
   if (themeQuery.addEventListener) themeQuery.addEventListener("change", onScheme);
   else if (themeQuery.addListener) themeQuery.addListener(onScheme);
+}
+
+/* ---- card payments from a Shortcut ----
+   An iPhone Shortcut can run every time a card in Wallet is tapped, and it is
+   handed the shop and the amount. It cannot open a home-screen web app, and a
+   link it opens lands in Safari, whose storage is not this app's. So the
+   Shortcut keeps a running list in a text file and copies it to the
+   clipboard; one tap on Paste here brings in whatever is new. A line reads
+
+     Pockets | 2026-11-24 13:02 | €5.65 | TESCO STORES 6387
+
+   in any order after the first field. Each line's id is derived from the line
+   itself, so pasting the whole list again adds nothing twice, and a payment
+   you undo stays undone. A payment you already typed in by hand, the same
+   amount within a day, is skipped rather than counted twice. */
+const CARD_LINE = /^\s*pockets\s*\|/i;
+const CARD_LABELS = [
+  [/locker/, "Storage"],
+  [/jacobs ?inn|abigail|hostel|booking\.?com|airbnb/, "Hostel"],
+  [/deliveroo|just ?eat|uber ?eats|abrakebabra|\bdhc\b|xi.?an|zaytoon|rotana|chicky|mcdonald|burger ?king|supermac|kebab|pizza|shakedog|chocofruit|subway|\bkfc\b/, "Takeaway"],
+  [/starbucks|costa|insomnia|cloud ?9|coffee|caff?e|mc ?dermott/, "Coffee"],
+  [/tesco|lidl|aldi|dunnes|supervalu|\bsv\b|\bspar\b|centra|halal|londis|daybreak/, "Groceries"],
+  [/bus ?eireann|expressway|leap|irish ?rail|luas|dublin ?bus|transport|\btfi\b/, "Transport"],
+  [/remitly|nayapay|western ?union|\bwise\b|moneygram/, "Remitly"],
+  [/playstation|\bpsn\b|steam|nintendo|xbox|smyths|funhub/, "Games"],
+  [/apple\.com|itunes|spotify|netflix|claude|anthropic|openai|whop|youtube/, "Subscriptions"],
+  [/penneys|primark|zara|\bh ?& ?m\b|elverys|intersport|brown ?thomas|jd ?sports|river ?island/, "Clothes"]
+];
+function plainText(s){ return String(s || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase(); }
+/** "MS* JACOBSINN" -> "Jacobsinn", "TESCO STORES 6387" -> "Tesco Stores". */
+function cleanMerchant(m){
+  let s = String(m || "").replace(/\s+/g, " ").trim();
+  s = s.replace(/^(vd[pca]|ms|sq|sumup|nya|tst|zettle|sp|pp|paypal)\s*[*\-]\s*/i, "");
+  s = (s.split("*")[0] || s).trim();          // "Remitly* R22565598896" -> "Remitly"
+  s = s.replace(/[\s*#\-]*\d[\d\s\-]*$/, "").trim();
+  if (s && (s === s.toUpperCase() || s === s.toLowerCase())) s = s.toLowerCase().replace(/(^|[\s(\/-])(\S)/g, (a, b, c) => b + c.toUpperCase());
+  return s.slice(0, 40) || "Card payment";
+}
+/** The first two words, letters only — enough to know Tesco from Tesco Stores. */
+function merchantKey(s){
+  const words = plainText(cleanMerchant(s)).replace(/[^a-z\s]/g, " ").split(/\s+/).filter(Boolean);
+  const k = words.slice(0, 2).join("");
+  return k.length >= 4 ? k : "";
+}
+function sameMerchant(a, b){ return !!a && !!b && (a.indexOf(b) === 0 || b.indexOf(a) === 0); }
+/** How a shop's money should be filed: as the last payment there of about this
+    size was, if there was one — so Jacobs Inn at €48 files as Hostel and at
+    €2.50 as Coffee — else by what the shop is. Paid out of a goal last time
+    and the goal still holds enough, it is paid out of the goal again. */
+function fileCard(merchant, amount){
+  const key = merchantKey(merchant);
+  let best = null, bestGap = Infinity;
+  if (key) state.tx.forEach(t => {
+    if (t.kind !== "expense" || t.jar || !sameMerchant(merchantKey(t.note || t.label), key)) return;
+    const gap = Math.abs(Math.log((num(t.amount) || 0.01) / (amount || 0.01)));
+    if (gap < bestGap || (gap === bestGap && best && t.date > best.date)) { best = t; bestGap = gap; }
+  });
+  if (best && best.label) {
+    const g = paidFrom(best);
+    const live = g && !g.archived && !g.deletedOn && (derive().held[g.id] || 0) >= amount - 0.005 ? g : null;
+    return { label: best.label, goal: live };
+  }
+  const p = plainText(merchant);
+  const hit = CARD_LABELS.find(([re]) => re.test(p));
+  return { label: hit ? hit[1] : OTHER, goal: null };
+}
+function hashText(s){
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193); }
+  return (h >>> 0).toString(36);
+}
+function parseCardLine(line){
+  const parts = line.split("|").slice(1).map(x => x.trim()).filter(Boolean);
+  let date = null, time = "", amount = 0, merchant = "";
+  parts.forEach(f => {
+    const dm = !date && f.match(/(\d{4})-(\d{2})-(\d{2})/);
+    if (dm) { date = dm[1] + "-" + dm[2] + "-" + dm[3]; const tm = f.match(/(\d{1,2}):(\d{2})/); time = tm ? tm[0] : ""; return; }
+    if (!amount && /\d/.test(f) && !/[a-z]/i.test(f.replace(/\b(eur|gbp|usd)\b/gi, ""))) { amount = Math.abs(parseAmount(f)); return; }
+    if (!merchant && /\p{L}/u.test(f)) merchant = f;
+  });
+  if (!(amount > 0)) return null;
+  const today = todayISO();
+  if (!date || date > today) date = today;
+  return { id: "card-" + hashText(date + " " + time + "|" + amount.toFixed(2) + "|" + plainText(merchant)),
+           date, amount, merchant: merchant || "Card payment" };
+}
+function importCardText(text){
+  const lines = String(text || "").split(/\r?\n/).filter(l => CARD_LINE.test(l));
+  const res = { lines: lines.length, added: [], twins: 0 };
+  const have = {}, claimed = {};
+  state.tx.forEach(t => have[t.id] = true);
+  lines.forEach(line => {
+    const p = parseCardLine(line);
+    if (!p || have[p.id] || state.tombstones[p.id]) return;
+    have[p.id] = true;
+    const twin = state.tx.find(t => t.kind === "expense" && !/^card-/.test(t.id) && !claimed[t.id]
+      && Math.abs(num(t.amount) - p.amount) < 0.005 && Math.abs(daysBetween(t.date, p.date)) <= 1);
+    if (twin) { claimed[twin.id] = true; state.tombstones[p.id] = Date.now(); res.twins++; return; }
+    const f = fileCard(p.merchant, p.amount);
+    const note = cleanMerchant(p.merchant);
+    if (f.goal) payFromGoal(f.goal, p.amount, f.label, note, p.date, p.id);
+    else addTx({ id: p.id, kind:"expense", amount: p.amount, label: f.label, note, date: p.date });
+    res.added.push({ amount: p.amount, label: f.label });
+  });
+  if (res.twins) save();
+  return res;
+}
+function sayCardImport(res){
+  if (!res.lines) return "Nothing from the Shortcut on the clipboard";
+  const total = round2(res.added.reduce((a, x) => a + x.amount, 0));
+  const twins = res.twins ? " · " + res.twins + " already recorded" : "";
+  if (!res.added.length) return "Nothing new" + twins;
+  return "Added " + res.added.length + " card payment" + (res.added.length === 1 ? "" : "s") + " · −" + fmt(total) + twins;
+}
+function usesCardShortcut(){
+  return state.tx.some(t => /^card-/.test(t.id)) || Object.keys(state.tombstones).some(k => /^card-/.test(k));
+}
+/* Reading the clipboard needs the tap itself, and iOS shows its own Paste
+   button for it. Where the browser will not, the text can be pasted by hand. */
+function doCardPaste(){
+  const fallback = () => sheetCardPaste();
+  if (!navigator.clipboard || !navigator.clipboard.readText) return fallback();
+  navigator.clipboard.readText().then(text => {
+    if (!/^\s*pockets\s*\|/im.test(text || "")) return fallback();
+    const res = importCardText(text);
+    closeSheet(true); render(); toast(sayCardImport(res));
+  }).catch(fallback);
+}
+function sheetCardPaste(){
+  ui.sheet = "cardpaste";
+  openSheet("Card payments", `
+    <div class="say" style="padding-top:0">Nothing from the Shortcut came off the clipboard. Run the Shortcut’s “Copy for Pockets” step, or press and hold below and paste.</div>
+    <div class="field"><textarea class="input" id="f-cards" rows="6" placeholder="Pockets | 2026-11-24 13:02 | €5.65 | Tesco"></textarea></div>
+    <button class="pill" style="width:100%;margin-top:12px" data-do="cardtext">Add these</button>`);
+}
+function doCardText(){
+  const res = importCardText(val("#f-cards"));
+  closeSheet(); render(); toast(sayCardImport(res));
 }
 
 /* ---- quick capture from the home screen ----
@@ -3114,6 +3432,14 @@ function runHash(){
   if (q.add !== undefined) {
     ui.pad = amount > 0 ? String(amount) : "";
     sheetIncome();
+    return true;
+  }
+  /* The card Shortcut, for a copy opened in Safari: one payment per link,
+     through the same door as a pasted list, so it is filed the same way and
+     a second firing adds nothing. */
+  if (q.card !== undefined && amount > 0) {
+    const res = importCardText(["Pockets", q.at || q.date || "", q.amount, typeof q.card === "string" ? q.card : ""].join(" | "));
+    ui.tab = "home"; render(); toast(sayCardImport(res));
     return true;
   }
   return false;

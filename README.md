@@ -384,6 +384,11 @@ and copies the file, and Pockets reads it off the clipboard when you tap
 Pockets | 2026-11-24 13:02 | €5.65 | TESCO STORES 6387
 ```
 
+The date can be in whatever form the phone writes it (`24/11/2026, 5:16 PM`,
+`24 Nov 2026 at 17:16`, `2026-11-24 17:16`). Day before month, unless that
+cannot be. The time is part of the payment's id, so two €3 lockers on one day
+stay two payments.
+
 Each payment is filed by the shop: like the last payment there of about the
 same size (so Jacobs Inn at €48 is Hostel and at €2.50 is Coffee), else by what
 the shop is (Tesco is Groceries, Bus Éireann is Transport), else as Other. A

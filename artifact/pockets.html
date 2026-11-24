@@ -552,6 +552,7 @@ function defaultState(){
       spendBy:"week",       // Spending reads a "week" or a "month" at a time
       payLag:7,             // paid this many days late: see payMonthOf. 0 = paid in the month
       weekLimit:0,          // the most to spend in a week, Monday to Sunday. 0 = no limit
+      relay:"",             // private ntfy.sh topic the card Shortcut sends to, "" = off: see pollRelay
       updatedAt: now
     },
     items: [],              // goal | bill | repeat | tips
@@ -582,7 +583,7 @@ function freshState(){
   if (state) {
     state.tx.forEach(t => next.tombstones[t.id] = now);
     state.items.forEach(i => next.itemTombstones[i.id] = now);
-    ["currency","theme","name","sync","spendBy","payLag","weekLimit"].forEach(k => next.settings[k] = state.settings[k]);
+    ["currency","theme","name","sync","spendBy","payLag","weekLimit","relay"].forEach(k => next.settings[k] = state.settings[k]);
   }
   return next;
 }
@@ -655,6 +656,7 @@ function migrate(data){
   if (s.settings.spendBy !== "month") s.settings.spendBy = "week";
   s.settings.payLag = clamp(Math.round(num(s.settings.payLag)), 0, 31);
   s.settings.weekLimit = Math.max(0, round2(num(s.settings.weekLimit)));
+  s.settings.relay = /^[A-Za-z0-9_-]{8,64}$/.test(s.settings.relay || "") ? s.settings.relay : "";
   s.settings.updatedAt = num(s.settings.updatedAt);
   s.settings.payEvery = clamp(Math.round(num(s.settings.payEvery)) || 30, 1, 365);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(s.settings.payday || "")) s.settings.payday = null;
@@ -3016,6 +3018,16 @@ function sheetSettings(){
     <div class="lab" style="margin-top:26px;padding-bottom:9px;border-bottom:1px dashed var(--dash)">Card payments</div>
     <div class="say">An iPhone Shortcut notes every Apple Pay tap and copies the list. Paste brings in what is new: each is filed by the shop, and one you already typed in is skipped. Online payments, direct debits and transfers do not come through — record those yourself.</div>
     <button class="pill ghost sm" style="width:100%;margin-top:10px" data-act="cardpaste">Paste card payments</button>
+    ${state.settings.relay ? `
+    <div class="field" style="margin-top:14px"><label class="lab">Collected each time you open Pockets</label>
+      <input class="input" id="f-relay" readonly value="${esc(relayURL())}" style="font-size:16px"></div>
+    <div style="display:flex;gap:10px;margin-top:10px">
+      <button class="pill sm" style="flex:1" data-act="relaycopy">Copy address</button>
+      <button class="pill ghost sm" style="flex:1" data-act="relaycheck">Check now</button>
+    </div>
+    <button class="pill ghost sm" style="width:100%;margin-top:10px" data-act="relayoff">Stop collecting</button>`
+    : `<button class="pill sm" style="width:100%;margin-top:14px" data-act="relayon">Collect them automatically</button>`}
+    <div class="say">Collecting sends each payment’s date, shop and amount through ntfy.sh, a free service, to a private address only your phone knows. Nothing else — no card number, no balance. They wait there 12 hours; older ones still come in with Paste. Keep the address to yourself.</div>
 
     <div class="lab" style="margin-top:26px;padding-bottom:9px;border-bottom:1px dashed var(--dash)">This device</div>
     <div class="setrow" id="sync-row">
@@ -3324,6 +3336,10 @@ document.addEventListener("click", e => {
     tips: sheetTips,
     jarspend: () => { ui.pad = ""; ui.other = ""; ui.date = todayISO(); ui.pick = false; sheetJarSpend(); },
     cardpaste: doCardPaste,
+    relayon: doRelayOn,
+    relayoff: doRelayOff,
+    relaycopy: doRelayCopy,
+    relaycheck: () => pollRelay(true),
     week: () => { state.settings.spendBy = "week"; saveLocal(); ui.tab = "spending"; ui.back = 0; ui.seeAll = false; render(); },
     settings: sheetSettings,
     closesheet: () => closeSheet(),
@@ -3393,12 +3409,17 @@ function cleanMerchant(m){
   return s.slice(0, 40) || "Card payment";
 }
 /** The first two words, letters only — enough to know Tesco from Tesco Stores. */
+/** A shop's first word, and its first two run together: "Jacobs Inn" is both
+    "jacobs" and "jacobsinn", which is how the card writes it. */
 function merchantKey(s){
   const words = plainText(cleanMerchant(s)).replace(/[^a-z\s]/g, " ").split(/\s+/).filter(Boolean);
-  const k = words.slice(0, 2).join("");
-  return k.length >= 4 ? k : "";
+  if (!words.length || words[0].length < 3) return null;
+  return { one: words[0], two: words.slice(0, 2).join("") };
 }
-function sameMerchant(a, b){ return !!a && !!b && (a.indexOf(b) === 0 || b.indexOf(a) === 0); }
+/** Whole words only: Tesco is Tesco Stores, but Lock is not Lockers. */
+function sameMerchant(a, b){
+  return !!a && !!b && (a.one === b.one || a.two === b.two || a.two === b.one || a.one === b.two);
+}
 /** How a shop's money should be filed: as the last payment there of about this
     size was, if there was one — so Jacobs Inn at €48 files as Hostel and at
     €2.50 as Coffee — else by what the shop is. Paid out of a goal last time
@@ -3513,6 +3534,64 @@ function doCardPaste(){
     closeSheet(true); render(); toast(sayCardImport(res));
   }).catch(fallback);
 }
+/* ---- collecting card payments by themselves ----
+   A web app cannot read a file or the clipboard without a tap, so for
+   payments to arrive just by opening Pockets the Shortcut also sends each
+   line to ntfy.sh, a free relay, under a private topic made here: 128 random
+   bits, as hard to guess as a password. Each time the app is opened or comes
+   back to the front it asks for whatever is waiting and brings it in through
+   the same door as Paste, so a line already in, or undone, adds nothing.
+
+   What travels is the line itself — date, amount, shop. The relay keeps it
+   12 hours and does not encrypt it. A payment older than that, or one the
+   relay refused (it allows so many messages a day per connection), is still
+   in the Shortcut's file, and Paste brings it in. */
+const RELAY_HOST = "https://ntfy.sh/";
+let relayBusy = false, relayAt = 0;
+function relayURL(){ return state.settings.relay ? RELAY_HOST + state.settings.relay : ""; }
+function newRelayTopic(){
+  const b = new Uint8Array(16);
+  (window.crypto || window.msCrypto).getRandomValues(b);
+  return "pockets-" + Array.from(b, x => x.toString(16).padStart(2, "0")).join("");
+}
+function pollRelay(force){
+  if (!state || !state.settings.relay || relayBusy) return;
+  if (!force && Date.now() - relayAt < 15000) return;      // not on every flick between apps
+  relayBusy = true; relayAt = Date.now();
+  fetch(relayURL() + "/json?poll=1&since=all", { cache: "no-store" })
+    .then(r => { if (!r.ok) throw new Error("relay " + r.status); return r.text(); })
+    .then(body => {
+      const text = body.split("\n").map(l => {
+        try { const m = JSON.parse(l); return m && m.event === "message" ? String(m.message || "") : ""; }
+        catch (e) { return ""; }
+      }).filter(Boolean).join("\n");
+      const res = importCardText(text);
+      if (res.added.length || res.twins) render();
+      if (res.added.length) toast(sayCardImport(res));
+      else if (force) toast(res.twins ? sayCardImport(res) : "Nothing new waiting");
+    })
+    .catch(() => { if (force) toast("Couldn’t check — no signal?"); })
+    .then(() => { relayBusy = false; });
+}
+function doRelayOn(){
+  state.settings.relay = newRelayTopic();
+  state.settings.updatedAt = Date.now();
+  save(); sheetSettings(); toast("Copy the address into the Shortcut");
+}
+function doRelayOff(){
+  confirmSheet("Stop collecting?",
+    "Payments sent to this address stop coming in. Turning it on again makes a new address, so the Shortcut would need the new one.",
+    "Stop collecting", () => {
+      state.settings.relay = ""; state.settings.updatedAt = Date.now();
+      save(); closeSheet(); render(); toast("Stopped — Paste still works");
+    });
+}
+function doRelayCopy(){
+  const url = relayURL();
+  const done = () => toast("Copied — paste it into the Shortcut");
+  if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(url).then(done).catch(() => toast("Press and hold the address to copy it"));
+  else toast("Press and hold the address to copy it");
+}
 function sheetCardPaste(){
   ui.sheet = "cardpaste";
   openSheet("Card payments", `
@@ -3581,5 +3660,10 @@ runHash();
    reloading, so the same handler has to run again. */
 window.addEventListener("hashchange", runHash);
 startSync();
+/* Card payments waiting at the relay come in on opening, and again whenever
+   the app comes back to the front — a home-screen app is rarely reloaded. */
+pollRelay();
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") pollRelay(); });
+window.addEventListener("pageshow", e => { if (e.persisted) pollRelay(); });
 
 </script>

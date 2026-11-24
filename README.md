@@ -425,6 +425,34 @@ statement.
 A copy opened in Safari can take the same payment as a link instead:
 `#card=Tesco&amount=5.65&at=2026-11-24%2013:02`.
 
+### Collecting them automatically
+
+A web app cannot read a file or the clipboard without a tap, so Paste is one
+tap. To have payments come in just by opening Pockets, tap **Settings → Card
+payments → Collect them automatically**. Pockets makes a private address on
+[ntfy.sh](https://ntfy.sh), a free message relay:
+`https://ntfy.sh/pockets-` followed by 32 random characters, as hard to guess
+as a password. **Copy address**, and add one more action to the end of the
+Shortcut:
+
+- **Get Contents of URL**: the address, Method **POST**, Request Body **File**,
+  and for the file, *Select Variable* → the **Text** box that starts
+  `Pockets |`.
+
+From then on Pockets checks the address each time it is opened or comes back
+to the front, and brings in what is waiting through the same door as Paste.
+So a payment already in, or one you undid, adds nothing, and **Check now**
+does the same on demand.
+
+What travels is the line and nothing else: the date, the amount and the shop.
+No card number, balance, name or account. The relay does not encrypt it and
+keeps it **12 hours**, so open Pockets at least once in that time. A payment
+older than that is still in the Shortcut's file, and Paste brings it in. The
+relay also limits how many messages one connection may send in a day. Anyone
+who had the address could read what is waiting, or send a fake payment, which
+Undo removes. So keep the address to yourself. **Stop collecting** forgets it,
+and turning collecting on again makes a new one.
+
 ## Sync across devices
 
 *This applies to the Claude Artifact build only.* Its runtime provides the

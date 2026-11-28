@@ -146,6 +146,20 @@ a 28-day prepay plan is not monthly. It drifts earlier through the year and
 bills thirteen times, not twelve, so a day-of-the-month field quietly
 under-budgets it.
 
+**Against a weekly limit, a bill can count a share every week** instead of
+landing all at once. Edit the bill and pick *A share every week*. €20 every 28
+days then counts as **€5 a week**, and a monthly bill as twelve fifty-seconds of
+itself. The week you pay it counts nothing more for it. Home says
+*incl. €5.00 Phone*, and the bill's row on Bills says *€5.00 a wk*. A payment
+belongs to the bill if you recorded it by tapping the bill or labelled it with
+the bill's name. Only the weekly limit is spread. Money left still drops by the
+full €20 on the day it is paid, because that is when it leaves the account.
+
+A card payment of exactly a bill's amount, within four days of a due date not
+yet paid, is taken as that bill: Vodafone €20 the day after the phone was due
+is marked paid on Bills. A payment at a shop known for something else, like
+Deliveroo or Tesco, is never taken for a bill.
+
 ### Where money comes from
 
 Money in takes a source the same way a spend takes a label: **Tips**, **Salary**,
@@ -323,7 +337,7 @@ for the week on Spending, which measures every week against the limit. The
 Record spending sheet weighs each spend against the week it falls in: *Leaves
 €54.28 of this week's €165*, or *Takes you €3.20 over*.
 
-It counts what you live on, bills included. It does not count what you pay
+It counts what you live on, bills included (or their weekly share, for a bill set to spread). It does not count what you pay
 out of a goal, like Mother's money, which came out of the pay before the week
 got it, nor a spend from the tip jar. Money left stays the headline, because it
 is what you actually have. A week under the limit leaves the rest there.

@@ -586,6 +586,7 @@ function mkItem(patch){
     /* goal */ kind:"save", target:0, targetDate:null,
                payCut:0, payCutPer:"pay",   // taken from each salary as it lands: see applyPayCuts
     /* bill */ amount:0, dueDay:null, cycleDays:null, cycleStart:null,
+               spread:false,               // count a share each week against the weekly limit, not the payment
     /* repeat */ days:[], from:null
   }, patch);
 }
@@ -717,6 +718,7 @@ function migrate(data){
     dueDay: c.dueDay == null ? null : clamp(Math.round(num(c.dueDay)), 1, 31),
     cycleDays: clamp(Math.round(num(c.cycleDays)), 0, 365) || null,
     cycleStart: /^\d{4}-\d{2}-\d{2}$/.test(c.cycleStart || "") ? c.cycleStart : null,
+    spread: !!c.spread,
     days: Array.isArray(c.days) ? c.days.map(Number).filter(d => d >= 0 && d <= 6) : [],
     from: /^\d{4}-\d{2}-\d{2}$/.test(c.from || "") ? c.from : null,
     archived: !!c.archived,
@@ -1162,21 +1164,52 @@ function goalPaidIds(){
    have decided to let yourself spend, and a week under it leaves the rest in
    Money left. */
 function weekLimit(){ return Math.max(0, num(state.settings.weekLimit)); }
+
+/* ---- a bill spread over the weeks ----
+   €20 for the phone every 28 days lands on one week and eats an eighth of
+   it, while the three weeks either side carry nothing. A bill marked to be
+   spread counts its share against every week instead — €20 every 28 days is
+   €5 a week, a monthly one twelve fifty-seconds of itself — and the week it
+   is paid counts nothing more for it. Only the weekly limit sees this. The
+   money still leaves Money left on the day it is paid, because that is when
+   it leaves the account. A payment is the bill's if it was recorded by tapping
+   the bill, or carries the bill's name as its label. */
+function billWeekShare(b){
+  return round2(isCycle(b) ? num(b.amount) * 7 / num(b.cycleDays) : num(b.amount) * 12 / 52);
+}
+function spreadBills(){
+  return state.items.filter(i => i.type === "bill" && i.spread && !i.archived && !i.deletedOn && num(i.amount) > 0);
+}
+function paysBill(t, b){
+  return t.kind === "expense" && !t.jar
+    && (t.itemId === b.id || (t.label || "").trim().toLowerCase() === String(b.name).trim().toLowerCase());
+}
 function limitSpentIn(p){
   const fromGoal = goalPaidIds();
+  const spread = spreadBills();
   let total = 0;
-  for (const t of state.tx) if (t.kind === "expense" && !t.jar && !fromGoal[t.id] && inPeriod(t, p)) total += num(t.amount);
+  for (const t of state.tx) {
+    if (t.kind !== "expense" || t.jar || fromGoal[t.id] || !inPeriod(t, p)) continue;
+    if (spread.some(b => paysBill(t, b))) continue;
+    total += num(t.amount);
+  }
   return round2(total);
 }
 function weekBudget(back){
   const limit = weekLimit();
   if (!limit) return null;
   const p = periodAt("week", back || 0);
-  const spent = limitSpentIn(p);
+  /* A spread bill's share is counted from the week its cycle starts. */
+  const shares = spreadBills()
+    .filter(b => !isCycle(b) || p.to >= b.cycleStart)
+    .map(b => ({ name: b.name, amount: billWeekShare(b) }));
+  const spent = round2(limitSpentIn(p) + shares.reduce((a, s) => a + s.amount, 0));
+  const fromGoal = goalPaidIds();
+  const goalPaid = round2(state.tx.reduce((a, t) => a + (t.kind === "expense" && !t.jar && fromGoal[t.id] && inPeriod(t, p) ? num(t.amount) : 0), 0));
   const today = todayISO();
   const daysLeft = p.to < today ? 0 : daysBetween(today > p.from ? today : p.from, p.to) + 1;   // today included
   const left = round2(limit - spent);
-  return { limit, spent, left, over: left < -0.005, daysLeft,
+  return { limit, spent, left, over: left < -0.005, daysLeft, shares, goalPaid,
            perDay: daysLeft > 0 && left > 0 ? round2(left / daysLeft) : 0, p };
 }
 
@@ -1618,9 +1651,11 @@ function viewHome(d){
   const wk = weekBudget();
   if (wk) {
     const pct = clamp(wk.spent / wk.limit * 100, 0, 100);
+    const spentTxt = fmt(wk.spent) + " spent"
+      + (wk.shares.length ? " incl. " + wk.shares.map(s => fmt(s.amount) + " " + s.name).join(", ") : "");
     const sub = wk.over
-      ? fmt(wk.spent) + " spent · over by " + fmt(-wk.left) + " · a new week starts Monday"
-      : fmt(wk.spent) + " spent · " + (wk.daysLeft > 1
+      ? spentTxt + " · over by " + fmt(-wk.left) + " · a new week starts Monday"
+      : spentTxt + " · " + (wk.daysLeft > 1
           ? fmt(wk.perDay) + " a day for " + wk.daysLeft + " days"
           : "the rest is today’s");
     html += `<div data-act="week" style="cursor:pointer;margin-top:16px;border-top:1px dashed var(--dash);padding-top:3px">
@@ -1746,7 +1781,7 @@ function billRow(r){
     <span class="code">${esc(r.item.code)}</span>
     <span class="row-main">
       <span class="row-name">${esc(r.item.name)}</span>
-      <span class="row-sub">${esc(when)}</span>
+      <span class="row-sub">${esc(when)}${r.item.spread && weekLimit() ? " · " + esc(fmt(billWeekShare(r.item))) + " a wk" : ""}</span>
     </span>
     <span class="tag ${r.cls || ""}">${esc(r.tag)}</span>
     <span class="row-amt">${esc(fmt(r.item.amount, { whole:true }))}</span>
@@ -2076,15 +2111,18 @@ function viewSpending(d){
     ${versus ? `<div style="font-size:13.5px;color:var(--ink-3);margin-top:2px">${esc(versus)}</div>` : ""}`;
 
   /* A week against the limit. What was paid out of a goal is not the week's
-     to carry, so say so when it makes the two figures differ. */
+     to carry, and a spread bill counts its weekly share rather than what was
+     paid, so say so when either makes the figures differ. */
   const wkb = by === "week" ? weekBudget(ui.back) : null;
   if (wkb) {
     const lim = fmt(wkb.limit, { whole:true });
-    const aside = round2(spent - wkb.spent);
+    const notes = [];
+    if (wkb.goalPaid > 0.005) notes.push(fmt(wkb.goalPaid) + " paid from goals not counted");
+    wkb.shares.forEach(s => notes.push(s.name + " counted at " + fmt(s.amount) + " a week"));
     html += `<div style="font-size:13.5px;color:${wkb.over ? "var(--neg)" : "var(--ink-3)"};margin-top:2px">${esc(
       (wkb.over ? fmt(-wkb.left) + " over your " + lim
        : fmt(wkb.left) + (ui.back === 0 ? " left of your " : " under your ") + lim)
-      + (aside > 0.005 ? " · " + fmt(aside) + " paid from goals not counted" : ""))}</div>`;
+      + notes.map(n => " · " + n).join(""))}</div>`;
   }
 
   /* A month reads start to finish: what came in, what went, what rolls on. */
@@ -2698,7 +2736,14 @@ function sheetEditItem(id, type){
     <div class="field" data-shape-cycle ${isCycle(v) ? "" : "hidden"}><label class="lab">Every how many days</label>
       <input class="input" id="f-cycledays" inputmode="numeric" value="${v.cycleDays || ""}" placeholder="28"></div>
     <div class="field" data-shape-cycle ${isCycle(v) ? "" : "hidden"}><label class="lab">Starting from</label>
-      <input class="input" id="f-cyclestart" type="date" value="${esc(v.cycleStart || todayISO())}"></div>`;
+      <input class="input" id="f-cyclestart" type="date" value="${esc(v.cycleStart || todayISO())}"></div>
+    <div class="field"><label class="lab">Against your weekly limit</label>
+      <div class="chips">
+        <button data-spread="0" aria-pressed="${!v.spread}">The week it is paid</button>
+        <button data-spread="1" aria-pressed="${!!v.spread}">A share every week</button>
+      </div>
+      <input type="hidden" id="f-spread" value="${v.spread ? "1" : "0"}">
+      <div class="say">A share every week counts €20 every 28 days as €5 a week, so the week you pay it is not hit with all of it.</div></div>`;
   } else {
     body += `
     <div class="field"><label class="lab">Amount each time</label>
@@ -2732,6 +2777,7 @@ function doSaveItem(id, type){
     patch.payCutPer = val("#f-payper") === "month" ? "month" : "pay";
   } else if (type === "bill") {
     patch.amount = parseAmount(val("#f-amount"));
+    patch.spread = val("#f-spread") === "1";
     if (patch.amount <= 0) return toast("Give it an amount");
     if (val("#f-shape") === "cycle") {
       patch.cycleDays = clamp(Math.round(parseAmount(val("#f-cycledays"))), 1, 365);
@@ -3266,6 +3312,12 @@ document.addEventListener("click", e => {
     sheetEl().querySelectorAll("[data-kind]").forEach(b => b.setAttribute("aria-pressed", b === kind));
     return;
   }
+  const spreadOpt = hit("[data-spread]");
+  if (spreadOpt) {
+    sheetEl().querySelector("#f-spread").value = spreadOpt.dataset.spread;
+    sheetEl().querySelectorAll("[data-spread]").forEach(b => b.setAttribute("aria-pressed", b === spreadOpt));
+    return;
+  }
   const per = hit("[data-per]");
   if (per) {
     sheetEl().querySelector("#f-payper").value = per.dataset.per;
@@ -3457,6 +3509,43 @@ function fileCard(merchant, amount){
   const hit = CARD_LABELS.find(([re]) => re.test(p));
   return { label: hit ? hit[1] : OTHER, goal: null };
 }
+/* A card payment of exactly a bill's amount, within four days of a due date
+   not yet marked paid, is that bill: Vodafone €20 the day after the Phone
+   bill fell due. Tagged to the bill, it shows as paid on Bills, and a spread
+   bill does not count it twice. A payment at a shop known for something
+   else (Deliveroo, Tesco) is never taken for a bill, whatever it cost. */
+const BILL_PAYEES = /vodafone|vesta|\bthree\b|\beir\b|tesco ?mobile|\bgomo\b|lyca|virgin|\b48\b|electric|energy|bord gais|sse airtricity|flogas|netflix|spotify/;
+function billDatesNear(b, iso){
+  const out = [];
+  if (isCycle(b)) {
+    const step = clamp(Math.round(num(b.cycleDays)), 1, 365);
+    const k = Math.round(daysBetween(b.cycleStart, iso) / step);
+    for (let j = k - 1; j <= k + 1; j++) if (j >= 0) { const d = addDays(b.cycleStart, j * step); out.push({ iso:d, period:d }); }
+  } else if (b.dueDay) {
+    [-1, 0, 1].forEach(k => {
+      const mk = shiftMonth(monthOfISO(iso), k);
+      const [y, m] = mk.split("-").map(Number);
+      const last = new Date(y, m, 0).getDate();
+      out.push({ iso: isoOf(new Date(y, m - 1, clamp(b.dueDay, 1, last))), period: mk });
+    });
+  }
+  return out;
+}
+function billDueNear(amount, iso, merchant){
+  const p = plainText(merchant);
+  const shop = CARD_LABELS.some(([re]) => re.test(p));
+  let best = null;
+  state.items.forEach(b => {
+    if (b.type !== "bill" || b.archived || b.deletedOn || Math.abs(num(b.amount) - amount) > 0.005) return;
+    const named = BILL_PAYEES.test(p) || (merchantKey(b.name) && sameMerchant(merchantKey(b.name), merchantKey(merchant)));
+    if (shop && !named) return;
+    billDatesNear(b, iso).forEach(o => {
+      const gap = Math.abs(daysBetween(o.iso, iso));
+      if (gap <= 4 && !billPaid(b, o.period) && (!best || gap < best.gap)) best = { item:b, period:o.period, gap };
+    });
+  });
+  return best;
+}
 function hashText(s){
   let h = 0x811c9dc5;
   for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193); }
@@ -3520,8 +3609,15 @@ function importCardText(text){
     const twin = state.tx.find(t => t.kind === "expense" && !/^card-/.test(t.id) && !claimed[t.id]
       && Math.abs(num(t.amount) - p.amount) < 0.005 && Math.abs(daysBetween(t.date, p.date)) <= 1);
     if (twin) { claimed[twin.id] = true; state.tombstones[p.id] = Date.now(); res.twins++; return; }
-    const f = fileCard(p.merchant, p.amount);
     const note = cleanMerchant(p.merchant);
+    const due = billDueNear(p.amount, p.date, p.merchant);
+    if (due) {
+      addTx({ id: p.id, kind:"expense", amount: p.amount, label: due.item.name, note, date: p.date,
+              itemId: due.item.id, billPeriod: due.period });
+      res.added.push({ amount: p.amount, label: due.item.name });
+      return;
+    }
+    const f = fileCard(p.merchant, p.amount);
     if (f.goal) payFromGoal(f.goal, p.amount, f.label, note, p.date, p.id);
     else addTx({ id: p.id, kind:"expense", amount: p.amount, label: f.label, note, date: p.date });
     res.added.push({ amount: p.amount, label: f.label });
